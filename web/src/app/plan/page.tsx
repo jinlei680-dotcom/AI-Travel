@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import MapView from "@/components/MapView";
 import VoiceButton from "@/components/VoiceButton";
@@ -37,10 +37,30 @@ export default function PlanPage() {
   const [destinationCoord, setDestinationCoord] = useState("116.3975,39.9087");
   const [type, setType] = useState("driving");
 
+  // 主页生成的行程数据（localStorage 注入）
+  type PlanItem = { id: string; time?: string; title: string; note?: string };
+  type PlanDay = { date: string; items: PlanItem[] };
+  const [plan, setPlan] = useState<null | { destination: string; start_date: string; end_date: string; days: PlanDay[]; markers?: { position: [number, number]; title?: string }[] }>(null);
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem("lastPlan");
+      if (raw) {
+        const obj = JSON.parse(raw);
+        if (obj && obj.destination && obj.days) setPlan(obj);
+      }
+    } catch {}
+  }, []);
+
   const { data, isLoading, error, refetch } = useRouteQuery({ origin, destination, originCoord, destinationCoord, type });
 
   const routePath = data?.polyline ?? [];
-  const center = routePath.length ? routePath[0] : [116.397428, 39.90923];
+  const planMarkers = useMemo(() => plan?.markers ?? [], [plan]);
+  const center = routePath.length
+    ? routePath[0]
+    : planMarkers.length
+    ? planMarkers[0].position
+    : [116.397428, 39.90923];
 
   // 解析“从xxx到xxx”并生成路线
   const handleTranscribe = async (text: string) => {
@@ -148,6 +168,35 @@ export default function PlanPage() {
 
   return (
     <div className="p-4 space-y-4">
+      {plan && (
+        <div className="rounded-lg border border-zinc-200 p-4">
+          <div className="flex items-center justify-between">
+            <div className="text-sm font-medium">最新生成行程：{plan.destination}</div>
+            <div className="text-xs text-zinc-500">{plan.start_date} → {plan.end_date}</div>
+          </div>
+          <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-2">
+            <div>
+              {plan.days.map((d) => (
+                <div key={d.date} className="mb-2 rounded border border-zinc-200 p-2">
+                  <div className="text-xs font-medium">{d.date}</div>
+                  <ul className="mt-1 space-y-1">
+                    {d.items.map((it) => (
+                      <li key={it.id} className="text-xs text-zinc-700">
+                        {it.time ? <span className="mr-2 text-zinc-500">{it.time}</span> : null}
+                        {it.title}
+                        {it.note ? <span className="ml-2 text-zinc-400">{it.note}</span> : null}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ))}
+            </div>
+            <div>
+              <MapView markers={planMarkers} className="h-[280px]" />
+            </div>
+          </div>
+        </div>
+      )}
       <div className="flex gap-2">
         <input className="border px-2 py-1" placeholder="起点" value={origin} onChange={(e) => setOrigin(e.target.value)} />
         <input className="border px-2 py-1" placeholder="终点" value={destination} onChange={(e) => setDestination(e.target.value)} />
@@ -162,7 +211,7 @@ export default function PlanPage() {
       {error && <div className="text-red-600">{String((error as Error)?.message)}</div>}
       {isLoading && <div>加载中...</div>}
       <div className="relative h-[480px] border rounded overflow-hidden">
-        <MapView center={center as [number, number]} zoom={12} routePath={routePath} />
+        <MapView center={center as [number, number]} zoom={12} routePath={routePath} markers={planMarkers} />
       </div>
       {data && (
         <div className="text-sm text-gray-700">
