@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
-export const runtime = "node";
+export const runtime = "nodejs";
 
 const PlanSpecSchema = z.object({
   destination: z.string().min(1, "destination required"),
@@ -91,16 +91,17 @@ export async function POST(req: Request) {
   const slots = pace === "relaxed" ? ["上午", "下午"] : pace === "intense" ? ["早晨", "上午", "午后", "傍晚"] : ["上午", "午后", "晚上"];
 
   async function generateDaysWithDoubao(): Promise<PlanDay[] | null> {
-    const provider = process.env.LLM_PROVIDER;
+    const provider = (process.env.LLM_PROVIDER || "").toLowerCase();
     const apiKey = process.env.DOUBAO_API_KEY;
     const model = process.env.DOUBAO_MODEL;
     const base = process.env.DOUBAO_API_BASE || "";
-    if (provider !== "doubao" || !apiKey || !model || !base) return null;
+    // 兼容 "doubao" 或 "volcengine" 的提供方标识
+    if (!(provider === "doubao" || provider === "volcengine") || !apiKey || !model || !base) return null;
     const url = base.replace(/\/$/, "") + "/chat/completions";
     const sys =
       "你是旅行行程生成助手。只输出 JSON，字段为 days:[{date,time,title,note}...]。日期范围覆盖用户给定的开始到结束日期，每天生成2-4个合理活动，避免泛泛描述。确保严格 JSON 格式。";
     const user = `目的地:${destination}; 开始:${start_date}; 结束:${end_date}; 偏好:${preferences?.pace || "standard"}`;
-    const body = {
+    const baseBody: any = {
       model,
       messages: [
         { role: "system", content: sys },
@@ -108,33 +109,70 @@ export async function POST(req: Request) {
       ],
       temperature: Number(process.env.DOUBAO_TEMPERATURE ?? 0.2),
       max_tokens: Number(process.env.DOUBAO_MAX_TOKENS ?? 1200),
-      response_format: { type: "json_object" },
     };
     try {
-      const resp = await fetch(url, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify(body),
-      });
-      const data = await resp.json().catch(() => null);
+      const tryCall = async (useJsonFormat: boolean) => {
+        const body = useJsonFormat ? { ...baseBody, response_format: { type: "json_object" } } : baseBody;
+        const resp = await fetch(url, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${apiKey}`,
+          },
+          body: JSON.stringify(body),
+        });
+        const data = await resp.json().catch(() => null as any);
+        return { resp, data } as const;
+      };
+
+      let { resp, data } = await tryCall(true);
+      if (!resp.ok && data && (data.error?.param === "response_format.type" || /response_format\.type/.test(String(data.error?.message || "")))) {
+        ({ resp, data } = await tryCall(false));
+      }
       if (!resp.ok || !data) return null;
-      // Ark 格式：choices[0].message.content 为字符串（JSON）
       const content = data?.choices?.[0]?.message?.content ?? "";
-      const obj = typeof content === "string" ? JSON.parse(content) : content;
+      let obj: any = null;
+      if (typeof content === "string") {
+        try {
+          obj = JSON.parse(content);
+        } catch {
+          const m = content.match(/\{[\s\S]*\}/);
+          if (m) {
+            try { obj = JSON.parse(m[0]); } catch {}
+          }
+        }
+      } else {
+        obj = content;
+      }
+      if (!obj) return null;
       const rawDays = Array.isArray(obj?.days) ? obj.days : [];
-      // 规范化为 PlanDay[]
-      const days: PlanDay[] = rawDays.map((d: any) => ({
-        date: String(d.date || "").slice(0, 10) || fmtDate(allDays[0]),
-        items: (Array.isArray(d.items) ? d.items : []).map((it: any, idx: number) => ({
-          id: `${String(d.date || fmtDate(allDays[0]))}-${idx}`,
-          time: String(it.time || ""),
-          title: String(it.title || "待定"),
-          note: it.note ? String(it.note) : undefined,
-        })),
-      }));
+      let days: PlanDay[] = [];
+      if (rawDays.length && Array.isArray(rawDays[0]?.items)) {
+        days = rawDays.map((d: any) => ({
+          date: String(d.date || "").slice(0, 10) || fmtDate(allDays[0]),
+          items: (Array.isArray(d.items) ? d.items : []).map((it: any, idx: number) => ({
+            id: `${String(d.date || fmtDate(allDays[0]))}-${idx}`,
+            time: String(it.time || ""),
+            title: String(it.title || "待定"),
+            note: it.note ? String(it.note) : undefined,
+          })),
+        }));
+      } else {
+        const bucket = new Map<string, PlanItem[]>();
+        for (const it of rawDays as any[]) {
+          const dateStr = String(it?.date || "").slice(0, 10) || fmtDate(allDays[0]);
+          const arr = bucket.get(dateStr) || [];
+          arr.push({
+            id: `${dateStr}-${arr.length}`,
+            time: String(it?.time || ""),
+            title: String(it?.title || "待定"),
+            note: it?.note ? String(it.note) : undefined,
+          });
+          bucket.set(dateStr, arr);
+        }
+        const datesOrdered = allDays.map(fmtDate);
+        days = datesOrdered.map((d) => ({ date: d, items: bucket.get(d) || [] }));
+      }
       return days.length ? days : null;
     } catch {
       return null;
