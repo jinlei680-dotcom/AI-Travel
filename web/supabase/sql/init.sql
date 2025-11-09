@@ -78,31 +78,90 @@ alter table public.itinerary_days enable row level security;
 alter table public.itinerary_items enable row level security;
 alter table public.expenses enable row level security;
 
--- RLS 策略：仅本人可读写
-create policy if not exists users_owner on public.users
+-- RLS 策略：创建前先移除以便脚本可重复执行
+drop policy if exists users_owner on public.users;
+drop policy if exists plans_owner_select on public.trip_plans;
+drop policy if exists plans_owner_mod on public.trip_plans;
+drop policy if exists days_owner_select on public.itinerary_days;
+drop policy if exists days_owner_mod on public.itinerary_days;
+drop policy if exists items_owner_select on public.itinerary_items;
+drop policy if exists items_owner_mod on public.itinerary_items;
+drop policy if exists expenses_owner_select on public.expenses;
+drop policy if exists expenses_owner_mod on public.expenses;
+
+-- RLS 策略：仅本人可读写（去除不支持的 IF NOT EXISTS）
+create policy users_owner on public.users
   for all using (id = auth.uid()) with check (id = auth.uid());
 
-create policy if not exists plans_owner_select on public.trip_plans
+create policy plans_owner_select on public.trip_plans
   for select using (user_id = auth.uid());
-create policy if not exists plans_owner_mod on public.trip_plans
+create policy plans_owner_mod on public.trip_plans
   for all using (user_id = auth.uid()) with check (user_id = auth.uid());
 
-create policy if not exists days_owner_select on public.itinerary_days
-  for select using (exists(select 1 from public.trip_plans p where p.id = itinerary_days.trip_plan_id and p.user_id = auth.uid()));
-create policy if not exists days_owner_mod on public.itinerary_days
-  for all using (exists(select 1 from public.trip_plans p where p.id = itinerary_days.trip_plan_id and p.user_id = auth.uid()))
-  with check (exists(select 1 from public.trip_plans p where p.id = itinerary_days.trip_plan_id and p.user_id = auth.uid()));
+create policy days_owner_select on public.itinerary_days
+  for select using (
+    exists(
+      select 1 from public.trip_plans p
+      where p.id = itinerary_days.trip_plan_id and p.user_id = auth.uid()
+    )
+  );
+create policy days_owner_mod on public.itinerary_days
+  for all using (
+    exists(
+      select 1 from public.trip_plans p
+      where p.id = itinerary_days.trip_plan_id and p.user_id = auth.uid()
+    )
+  )
+  with check (
+    exists(
+      select 1 from public.trip_plans p
+      where p.id = itinerary_days.trip_plan_id and p.user_id = auth.uid()
+    )
+  );
 
-create policy if not exists items_owner_select on public.itinerary_items
-  for select using (exists(select 1 from public.itinerary_days d join public.trip_plans p on d.trip_plan_id = p.id where d.id = itinerary_items.day_id and p.user_id = auth.uid()));
-create policy if not exists items_owner_mod on public.itinerary_items
-  for all using (exists(select 1 from public.itinerary_days d join public.trip_plans p on d.trip_plan_id = p.id where d.id = itinerary_items.day_id and p.user_id = auth.uid()))
-  with check (exists(select 1 from public.itinerary_days d join public.trip_plans p on d.trip_plan_id = p.id where d.id = itinerary_items.day_id and p.user_id = auth.uid()));
+create policy items_owner_select on public.itinerary_items
+  for select using (
+    exists(
+      select 1 from public.itinerary_days d
+      join public.trip_plans p on d.trip_plan_id = p.id
+      where d.id = itinerary_items.day_id and p.user_id = auth.uid()
+    )
+  );
+create policy items_owner_mod on public.itinerary_items
+  for all using (
+    exists(
+      select 1 from public.itinerary_days d
+      join public.trip_plans p on d.trip_plan_id = p.id
+      where d.id = itinerary_items.day_id and p.user_id = auth.uid()
+    )
+  )
+  with check (
+    exists(
+      select 1 from public.itinerary_days d
+      join public.trip_plans p on d.trip_plan_id = p.id
+      where d.id = itinerary_items.day_id and p.user_id = auth.uid()
+    )
+  );
 
-create policy if not exists expenses_owner_select on public.expenses
-  for select using (exists(select 1 from public.trip_plans p where p.id = expenses.trip_plan_id and p.user_id = auth.uid()));
-create policy if not exists expenses_owner_mod on public.expenses
-  for all using (exists(select 1 from public.trip_plans p where p.id = expenses.trip_plan_id and p.user_id = auth.uid()))
-  with check (exists(select 1 from public.trip_plans p where p.id = expenses.trip_plan_id and p.user_id = auth.uid()));
+create policy expenses_owner_select on public.expenses
+  for select using (
+    exists(
+      select 1 from public.trip_plans p
+      where p.id = expenses.trip_plan_id and p.user_id = auth.uid()
+    )
+  );
+create policy expenses_owner_mod on public.expenses
+  for all using (
+    exists(
+      select 1 from public.trip_plans p
+      where p.id = expenses.trip_plan_id and p.user_id = auth.uid()
+    )
+  )
+  with check (
+    exists(
+      select 1 from public.trip_plans p
+      where p.id = expenses.trip_plan_id and p.user_id = auth.uid()
+    )
+  );
 
 -- 完成
