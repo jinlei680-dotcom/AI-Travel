@@ -34,6 +34,8 @@ export async function GET(req: Request) {
       name: p.name,
       location: { lng, lat },
       address: p.address || p.adname || "",
+      cityname: p.cityname || "",
+      adname: p.adname || "",
       type: p.type || p.typecode || "",
     };
   });

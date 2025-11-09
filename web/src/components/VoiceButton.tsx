@@ -11,7 +11,7 @@ type State = "idle" | "recording" | "transcribing" | "done" | "error";
 export default function VoiceButton({ onTranscribe, className = "" }: VoiceButtonProps) {
   const [state, setState] = useState<State>("idle");
   const [message, setMessage] = useState<string>("");
-  const [mode, setMode] = useState<"service" | "iflytek" | "browser">("service");
+  const [mode] = useState<"service" | "iflytek" | "browser">("iflytek");
   const streamRef = useRef<MediaStream | null>(null);
   const recRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<BlobPart[]>([]);
@@ -19,6 +19,7 @@ export default function VoiceButton({ onTranscribe, className = "" }: VoiceButto
   const audioCtxRef = useRef<AudioContext | null>(null);
   const processorRef = useRef<ScriptProcessorNode | null>(null);
   const textRef = useRef<string>("");
+  const tokensRef = useRef<string[]>([]); // 累积识别词元，支持 wpgs 动态修正
 
   // 将 Float32 PCM 转为 16bit PCM 并 base64
   const floatTo16kBase64 = (input: Float32Array, inputSampleRate: number, targetRate = 16000) => {
@@ -66,14 +67,16 @@ export default function VoiceButton({ onTranscribe, className = "" }: VoiceButto
     try {
       const signRes = await fetch("/api/voice/iflytek/sign");
       if (signRes.status === 501) {
-        setMessage("未配置讯飞密钥，回退浏览器识别");
-        startBrowserSpeech();
+        setState("error");
+        setMessage("未配置讯飞密钥，请在 .env.local 配置 IFLYTEK_APP_ID/KEY/SECRET");
         return;
       }
       const { wsUrl, appId } = await signRes.json();
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
-      const audioCtx = new AudioContext({ sampleRate: 16000 });
+      // 使用默认设备采样率，避免部分浏览器不支持强制 16000 采样率
+      const AC: any = (window as any).AudioContext || (window as any).webkitAudioContext;
+      const audioCtx = new AC();
       audioCtxRef.current = audioCtx;
       const source = audioCtx.createMediaStreamSource(stream);
       const processor = audioCtx.createScriptProcessor(4096, 1, 1);
@@ -93,6 +96,8 @@ export default function VoiceButton({ onTranscribe, className = "" }: VoiceButto
             language: "zh_cn",
             domain: "iat",
             accent: "mandarin",
+            // 启用动态修正以便实时返回片段
+            dwa: "wpgs",
             vad_eos: 5000,
           },
           data: {
@@ -104,7 +109,7 @@ export default function VoiceButton({ onTranscribe, className = "" }: VoiceButto
         };
         ws.send(JSON.stringify(startFrame));
 
-        processor.onaudioprocess = (e) => {
+        processor.onaudioprocess = (e: AudioProcessingEvent) => {
           const input = e.inputBuffer.getChannelData(0);
           const base64 = floatTo16kBase64(input, audioCtx.sampleRate, 16000);
           const frame = {
@@ -119,20 +124,56 @@ export default function VoiceButton({ onTranscribe, className = "" }: VoiceButto
         };
         source.connect(processor);
         processor.connect(audioCtx.destination);
+        tokensRef.current = [];
       };
 
-      ws.onmessage = (ev) => {
+      ws.onmessage = async (ev: MessageEvent) => {
         try {
-          const data = JSON.parse(ev.data);
+          let data: any;
+          if (typeof ev.data === "string") {
+            data = JSON.parse(ev.data);
+          } else if (ev.data instanceof Blob) {
+            data = JSON.parse(await ev.data.text());
+          } else if (ev.data instanceof ArrayBuffer) {
+            data = JSON.parse(new TextDecoder().decode(ev.data));
+          } else {
+            data = ev.data;
+          }
           if (data.code !== 0) {
             setState("error");
             setMessage(data.message || "讯飞识别错误");
             return;
           }
-          const text = parseIatText(data);
-          if (text) {
-            textRef.current += text;
-            setMessage(textRef.current);
+          const status = data?.data?.status;
+          const result = data?.data?.result || {};
+          const wsArr = result.ws || [];
+          const pgs = result.pgs; // 'apd' 追加 或 'rpl' 替换
+          const rg = result.rg || []; // [start, end] 1-based
+
+          const words: string[] = [];
+          for (const w of wsArr) {
+            const cw = w?.cw || [];
+            if (cw[0]?.w) words.push(cw[0].w);
+          }
+
+          if (words.length) {
+            if (pgs === "rpl" && Array.isArray(rg) && rg.length === 2) {
+              const start = Math.max(0, Number(rg[0]) - 1);
+              const end = Math.min(tokensRef.current.length, Number(rg[1]));
+              tokensRef.current.splice(start, end - start, ...words);
+            } else {
+              tokensRef.current.push(...words);
+            }
+
+            const full = tokensRef.current.join("");
+            setMessage(full);
+            textRef.current = full;
+
+            if (status === 2) {
+              setState("done");
+              onTranscribe?.(full);
+              try { ws.close(); } catch {}
+            }
           }
         } catch (e: any) {
           setState("error");
@@ -141,17 +182,33 @@ export default function VoiceButton({ onTranscribe, className = "" }: VoiceButto
       };
 
       ws.onerror = () => {
+        // 连接失败时提示并保持错误状态，不回退，以确保使用讯飞方案
+        try {
+          source.disconnect();
+          processor.disconnect();
+          if (audioCtx.state !== "closed") audioCtx.close();
+          stream.getTracks().forEach(t => t.stop());
+        } catch {}
         setState("error");
-        setMessage("讯飞连接错误");
+        setMessage("讯飞连接错误，请检查密钥、系统时间或网络");
       };
 
-      ws.onclose = () => {
+      ws.onclose = (ev: CloseEvent) => {
         if (textRef.current) {
           setState("done");
           onTranscribe?.(textRef.current);
         } else if (state === "recording") {
+          // 若正在录音被关闭，则恢复为空闲
           setState("idle");
+          setMessage("已停止");
         }
+        // 清理资源
+        try {
+          source.disconnect();
+          processor.disconnect();
+          if (audioCtx.state !== "closed") audioCtx.close();
+          stream.getTracks().forEach(t => t.stop());
+        } catch {}
       };
     } catch (e: any) {
       setState("error");
@@ -189,80 +246,41 @@ export default function VoiceButton({ onTranscribe, className = "" }: VoiceButto
   };
 
   const startRecording = async () => {
-    if (mode === "browser") {
-      startBrowserSpeech();
-      return;
-    }
-    if (mode === "iflytek") {
-      await startIflytek();
-      return;
-    }
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      streamRef.current = stream;
-      const rec = new MediaRecorder(stream, { mimeType: "audio/webm" });
-      recRef.current = rec;
-      chunksRef.current = [];
-      rec.ondataavailable = (e) => {
-        if (e.data && e.data.size > 0) chunksRef.current.push(e.data);
-      };
-      rec.onstop = async () => {
-        const blob = new Blob(chunksRef.current, { type: "audio/webm" });
-        setState("transcribing");
-        setMessage("正在转写...");
-        try {
-          const res = await fetch("/api/voice/transcribe", {
-            method: "POST",
-            headers: { "content-type": blob.type },
-            body: blob,
-          });
-          if (res.status === 501) {
-            // provider 未配置，回退到浏览器识别
-            startBrowserSpeech();
-            return;
-          }
-          if (!res.ok) throw new Error("转写接口错误");
-          const data = await res.json();
-          const text = data?.text || "";
-          setState("done");
-          setMessage(text);
-          onTranscribe?.(text);
-        } catch (e: any) {
-          setState("error");
-          setMessage(e?.message || "上传或识别失败");
-        }
-      };
-      rec.start();
-      setState("recording");
-      setMessage("录音中...");
-    } catch (e: any) {
-      setState("error");
-      setMessage(e?.message || "无法获取麦克风权限");
-    }
+    await startIflytek();
   };
 
   const stopRecording = () => {
-    if (mode === "iflytek") {
-      if (wsRef.current?.readyState === WebSocket.OPEN) {
-        try {
-          wsRef.current.send(
-            JSON.stringify({ data: { status: 2, format: "audio/L16;rate=16000", encoding: "raw", audio: "" } })
-          );
-        } catch {}
+    // 发送结束帧（若连接已打开）
+    try {
+      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+        wsRef.current.send(
+          JSON.stringify({ data: { status: 2, format: "audio/L16;rate=16000", encoding: "raw", audio: "" } })
+        );
       }
-      processorRef.current?.disconnect();
-      audioCtxRef.current?.close();
-      wsRef.current?.close();
-      processorRef.current = null;
-      audioCtxRef.current = null;
-      wsRef.current = null;
-    } else {
-      if (recRef.current && state === "recording") {
-        recRef.current.stop();
+    } catch {}
+
+    // 停止音频处理与关闭连接
+    try { if (processorRef.current) { (processorRef.current as any).onaudioprocess = null; processorRef.current.disconnect(); } } catch {}
+    try { if (audioCtxRef.current && audioCtxRef.current.state !== "closed") { audioCtxRef.current.close(); } } catch {}
+    // 允许服务端返回最终结果，再延迟关闭 WebSocket
+    try {
+      if (wsRef.current) {
+        const ws = wsRef.current;
+        setTimeout(() => { try { if (ws.readyState === WebSocket.OPEN) ws.close(); } catch {} }, 800);
       }
-    }
-    streamRef.current?.getTracks().forEach((t) => t.stop());
+    } catch {}
+
+    processorRef.current = null;
+    audioCtxRef.current = null;
+    wsRef.current = null;
+
+    // 停止麦克风流
+    try { streamRef.current?.getTracks().forEach((t) => t.stop()); } catch {}
     streamRef.current = null;
+
+    // 切为“转写中”，提示稍后生成路线
+    setState("transcribing");
+    setMessage("已停止，处理中...");
   };
 
   useEffect(() => () => stopRecording(), []);
@@ -275,16 +293,7 @@ export default function VoiceButton({ onTranscribe, className = "" }: VoiceButto
       >
         {state === "recording" ? "停止" : "语音输入"}
       </button>
-      <select
-        className="rounded border px-2 py-1 text-sm"
-        value={mode}
-        onChange={(e) => setMode(e.target.value as any)}
-        title="选择识别方式"
-      >
-        <option value="service">服务端识别</option>
-        <option value="iflytek">讯飞识别（WebSocket）</option>
-        <option value="browser">浏览器回退</option>
-      </select>
+      {/* 固定使用讯飞识别，不展示模式选择 */}
       <span className="text-xs text-zinc-500">{message}</span>
     </div>
   );

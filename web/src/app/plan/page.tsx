@@ -14,28 +14,21 @@ function useRouteQuery(params: { origin?: string; destination?: string; type?: s
       u.searchParams.set("destination", destinationCoord);
       u.searchParams.set("type", type);
       const res = await fetch(u.toString());
-      if (!res.ok) throw new Error("route api error");
+      if (res.status === 501) {
+        // 后端未配置 AMAP_WEBSERVICE_KEY 时返回 501，占位忽略错误以避免打断页面
+        return null;
+      }
+      if (!res.ok) {
+        const msg = await res.text().catch(() => "route api error");
+        throw new Error(msg || "route api error");
+      }
       return res.json();
     },
     enabled: !!originCoord && !!destinationCoord,
   });
 }
 
-function useSearchQuery(params: { query?: string; city?: string }) {
-  const { query = "", city = "北京" } = params;
-  return useQuery({
-    queryKey: ["search", query, city],
-    queryFn: async () => {
-      const u = new URL("/api/map/search", window.location.origin);
-      u.searchParams.set("query", query);
-      u.searchParams.set("city", city);
-      const res = await fetch(u.toString());
-      if (!res.ok) throw new Error("search api error");
-      return res.json();
-    },
-    enabled: !!query,
-  });
-}
+// 已移除搜索地点与城市的显式UI；仍保留内部解析以支持语音与手动查询
 
 export default function PlanPage() {
   const [origin, setOrigin] = useState("北京站");
@@ -43,15 +36,115 @@ export default function PlanPage() {
   const [originCoord, setOriginCoord] = useState("116.4336,39.9024");
   const [destinationCoord, setDestinationCoord] = useState("116.3975,39.9087");
   const [type, setType] = useState("driving");
-  const [query, setQuery] = useState("");
-  const [city, setCity] = useState("北京");
 
   const { data, isLoading, error, refetch } = useRouteQuery({ origin, destination, originCoord, destinationCoord, type });
-  const { data: searchData, isLoading: searchLoading, error: searchError, refetch: refetchSearch } = useSearchQuery({ query, city });
 
   const routePath = data?.polyline ?? [];
   const center = routePath.length ? routePath[0] : [116.397428, 39.90923];
-  const searchMarkers = (searchData?.pois ?? []).map((p: any) => ({ position: [p.location.lng, p.location.lat] as [number, number], title: p.name }));
+
+  // 解析“从xxx到xxx”并生成路线
+  const handleTranscribe = async (text: string) => {
+    // 清理换行/多余空格/句末标点，并解析“从xxx到xxx”
+    const cleaned = String(text)
+      .replace(/[\n\r]+/g, " ")
+      .replace(/\s+/g, " ")
+      .replace(/[，,。.!！?？]+$/g, "")
+      .trim();
+    const m = cleaned.match(/从\s*(.+?)\s*到\s*(.+)$/);
+    if (!m) {
+      // 不匹配则忽略
+      return;
+    }
+    const fromName = m[1].trim();
+    const toName = m[2].trim();
+
+    const extractCity = (n: string) => {
+      const cities = [
+        "北京","天津","上海","重庆","广州","深圳","杭州","苏州","南京","武汉","成都","西安","青岛","大连","沈阳","长春","哈尔滨","济南","郑州","佛山","宁波","无锡","厦门","福州","合肥","长沙","南昌","昆明","石家庄","太原","兰州","呼和浩特","贵阳","南宁","海口","唐山","保定"
+      ];
+      for (const c of cities) {
+        if (n.includes(c)) return c;
+      }
+      const m = n.match(/([\u4e00-\u9fa5]+)市/);
+      if (m) return m[1];
+      return "";
+    };
+    const resolvePoi = async (name: string) => {
+      const city = extractCity(name);
+      const u = new URL("/api/map/search", window.location.origin);
+      u.searchParams.set("query", name);
+      if (city) u.searchParams.set("city", city);
+      const resp = await fetch(u.toString());
+      if (!resp.ok) return null;
+      const jd = await resp.json().catch(() => null);
+      const pois: any[] = jd?.pois || [];
+      if (!pois.length) return null;
+      const norm = (s: string) => s.replace(/\s+/g, "").toLowerCase();
+      const target = norm(name);
+      const exact = pois.find((p: any) => norm(p.name) === target);
+      if (exact) return { name, coord: `${exact.location.lng},${exact.location.lat}` };
+      const byCity = city ? pois.find((p: any) => (p.cityname?.includes(city) || p.adname?.includes(city)) && norm(p.name).includes(target)) : null;
+      const poi = byCity || pois[0];
+      return { name, coord: `${poi.location.lng},${poi.location.lat}` };
+    };
+
+    // 先把左侧输入同步为语音文本
+    setOrigin(fromName);
+    setDestination(toName);
+    const from = await resolvePoi(fromName);
+    const to = await resolvePoi(toName);
+
+    if (from) setOriginCoord(from.coord);
+    if (to) setDestinationCoord(to.coord);
+
+    // 触发路线查询
+    refetch();
+  };
+
+  // 手动查询按钮：若坐标未与名称匹配，则自动解析坐标
+  const handleQueryRoute = async () => {
+    const extractCity = (n: string) => {
+      const cities = [
+        "北京","天津","上海","重庆","广州","深圳","杭州","苏州","南京","武汉","成都","西安","青岛","大连","沈阳","长春","哈尔滨","济南","郑州","佛山","宁波","无锡","厦门","福州","合肥","长沙","南昌","昆明","石家庄","太原","兰州","呼和浩特","贵阳","南宁","海口","唐山","保定"
+      ];
+      for (const c of cities) {
+        if (n.includes(c)) return c;
+      }
+      const m = n.match(/([\u4e00-\u9fa5]+)市/);
+      if (m) return m[1];
+      return "";
+    };
+    const resolvePoi = async (name: string) => {
+      const city = extractCity(name);
+      const u = new URL("/api/map/search", window.location.origin);
+      u.searchParams.set("query", name);
+      if (city) u.searchParams.set("city", city);
+      const resp = await fetch(u.toString());
+      if (!resp.ok) return null;
+      const jd = await resp.json().catch(() => null);
+      const pois: any[] = jd?.pois || [];
+      if (!pois.length) return null;
+      const norm = (s: string) => s.replace(/\s+/g, "").toLowerCase();
+      const target = norm(name);
+      const exact = pois.find((p: any) => norm(p.name) === target);
+      if (exact) return { name, coord: `${exact.location.lng},${exact.location.lat}` };
+      const byCity = city ? pois.find((p: any) => (p.cityname?.includes(city) || p.adname?.includes(city)) && norm(p.name).includes(target)) : null;
+      const poi = byCity || pois[0];
+      return { name, coord: `${poi.location.lng},${poi.location.lat}` };
+    };
+
+    // 若坐标仍是默认或未更新，则尝试用名称解析
+    if (!originCoord || originCoord === "116.4336,39.9024") {
+      const from = await resolvePoi(origin);
+      if (from) { setOrigin(from.name); setOriginCoord(from.coord); }
+    }
+    if (!destinationCoord || destinationCoord === "116.3975,39.9087") {
+      const to = await resolvePoi(destination);
+      if (to) { setDestination(to.name); setDestinationCoord(to.coord); }
+    }
+
+    refetch();
+  };
 
   return (
     <div className="p-4 space-y-4">
@@ -63,42 +156,18 @@ export default function PlanPage() {
           <option value="walking">步行</option>
           <option value="bicycling">骑行</option>
         </select>
-        <button className="bg-blue-600 text-white px-3 py-1 rounded" onClick={() => refetch()}>查询路线</button>
-      </div>
-      <div className="flex gap-2 items-center">
-        <input className="border px-2 py-1" placeholder="搜索地点" value={query} onChange={(e) => setQuery(e.target.value)} />
-        <input className="border px-2 py-1 w-28" placeholder="城市" value={city} onChange={(e) => setCity(e.target.value)} />
-        <button className="bg-gray-700 text-white px-3 py-1 rounded" onClick={() => refetchSearch()}>搜索</button>
-        <VoiceButton onTranscribe={(text) => { setQuery(text); refetchSearch(); }} />
+        <button className="bg-blue-600 text-white px-3 py-1 rounded" onClick={handleQueryRoute}>查询路线</button>
+        <VoiceButton onTranscribe={handleTranscribe} />
       </div>
       {error && <div className="text-red-600">{String((error as Error)?.message)}</div>}
       {isLoading && <div>加载中...</div>}
-      {searchError && <div className="text-red-600">{String((searchError as Error)?.message)}</div>}
-      {searchLoading && <div>搜索中...</div>}
       <div className="relative h-[480px] border rounded overflow-hidden">
-        <MapView center={center as [number, number]} zoom={12} routePath={routePath} markers={searchMarkers} />
+        <MapView center={center as [number, number]} zoom={12} routePath={routePath} />
       </div>
       {data && (
         <div className="text-sm text-gray-700">
           <div>距离：{Math.round(data.distance)} 米</div>
           <div>预计耗时：{Math.round(data.duration / 60)} 分钟</div>
-        </div>
-      )}
-      {searchData && (
-        <div className="text-sm text-gray-700 space-y-1">
-          <div className="font-medium">搜索结果（点击设置起点/终点）：</div>
-          {(searchData.pois ?? []).slice(0, 10).map((p: any, idx: number) => (
-            <div key={idx} className="flex items-center justify-between border-b py-1">
-              <div>
-                <div className="font-medium">{p.name}</div>
-                <div className="text-gray-500">{p.address ?? "-"}</div>
-              </div>
-              <div className="flex gap-2">
-                <button className="px-2 py-1 border rounded" onClick={() => { setOrigin(p.name); setOriginCoord(`${p.location.lng},${p.location.lat}`); }}>设为起点</button>
-                <button className="px-2 py-1 border rounded" onClick={() => { setDestination(p.name); setDestinationCoord(`${p.location.lng},${p.location.lat}`); }}>设为终点</button>
-              </div>
-            </div>
-          ))}
         </div>
       )}
     </div>

@@ -21,3 +21,4 @@ export default function Card({ title, actions, className = "", children }: CardP
     </div>
   );
 }
+
