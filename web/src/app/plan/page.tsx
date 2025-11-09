@@ -2,6 +2,7 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import MapView from "@/components/MapView";
+import VoiceButton from "@/components/VoiceButton";
 
 function useRouteQuery(params: { origin?: string; destination?: string; type?: string; originCoord?: string; destinationCoord?: string }) {
   const { origin = "北京站", destination = "天安门", type = "driving", originCoord = "116.4336,39.9024", destinationCoord = "116.3975,39.9087" } = params;
@@ -68,6 +69,7 @@ export default function PlanPage() {
         <input className="border px-2 py-1" placeholder="搜索地点" value={query} onChange={(e) => setQuery(e.target.value)} />
         <input className="border px-2 py-1 w-28" placeholder="城市" value={city} onChange={(e) => setCity(e.target.value)} />
         <button className="bg-gray-700 text-white px-3 py-1 rounded" onClick={() => refetchSearch()}>搜索</button>
+        <VoiceButton onTranscribe={(text) => { setQuery(text); refetchSearch(); }} />
       </div>
       {error && <div className="text-red-600">{String((error as Error)?.message)}</div>}
       {isLoading && <div>加载中...</div>}
