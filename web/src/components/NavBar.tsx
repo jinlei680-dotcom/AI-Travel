@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { getSupabaseClient } from "@/lib/supabase";
+import Button from "./Button";
 
 export default function NavBar() {
   const [email, setEmail] = useState<string | null>(null);
@@ -38,37 +39,30 @@ export default function NavBar() {
   };
 
   return (
-    <header className="w-full border-b border-zinc-200 bg-white/80 backdrop-blur dark:border-zinc-800 dark:bg-black/60">
-      <div className="mx-auto flex max-w-4xl items-center justify-between px-4 py-3">
-        <Link href="/" className="text-lg font-semibold">
+    <header className="w-full border-b border-gray-100 bg-white/80 backdrop-blur dark:border-zinc-800 dark:bg-black/60">
+      <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-3">
+        <Link
+          href="/"
+          className="text-lg font-semibold bg-clip-text text-transparent bg-gradient-to-r from-blue-600 to-indigo-600"
+        >
           AI Travel
         </Link>
         <nav className="flex items-center gap-3 text-sm">
+          <Link href="/dashboard" className="text-zinc-700 hover:text-zinc-900 dark:text-zinc-300">
+            Dashboard
+          </Link>
+          {loading && <span className="text-zinc-500 dark:text-zinc-400">加载中...</span>}
           {!loading && email && (
             <>
-              <Link
-                href="/dashboard"
-                className="rounded-md px-3 py-1.5 text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800"
-              >
-                Dashboard
-              </Link>
-              <span className="hidden sm:inline text-zinc-500 dark:text-zinc-400">
-                {email}
-              </span>
-              <button
-                onClick={handleSignOut}
-                className="rounded-md px-3 py-1.5 bg-zinc-900 text-white hover:bg-zinc-700 dark:bg-zinc-100 dark:text-black dark:hover:bg-zinc-300"
-              >
+              <span className="hidden sm:inline text-zinc-500 dark:text-zinc-400">{email}</span>
+              <Button onClick={handleSignOut} size="sm">
                 退出
-              </button>
+              </Button>
             </>
           )}
           {!loading && !email && (
-            <Link
-              href="/login"
-              className="rounded-md px-3 py-1.5 bg-zinc-900 text-white hover:bg-zinc-700 dark:bg-zinc-100 dark:text-black dark:hover:bg-zinc-300"
-            >
-              登录
+            <Link href="/login">
+              <Button variant="secondary" size="sm">登录</Button>
             </Link>
           )}
         </nav>
