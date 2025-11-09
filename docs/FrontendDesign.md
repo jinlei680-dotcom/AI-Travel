@@ -62,17 +62,17 @@
 - 复杂动作与第三方代理：通过 Next API 路由。
 - API 清单与契约：
   - `POST /api/plan/create`
-    - 入参：`{ destination, start_date, end_date, budget_total?, preferences? }`
-    - 出参：`{ plan_id, itinerary: { days: Array<{ date, items: Array<{ type, name, poi_id?, start_time?, end_time?, estimated_cost?, notes? }> }> } }`
+    - 入参：`{ destination, startDate, endDate, budgetTotal?, preferences? }`
+    - 出参：`{ planId, itinerary: { summary?, days: Array<{ date, items: Array<ItineraryItem>, routePath?: Array<{ lat, lng }>, markers?: Array<MapMarker>, transport?: TransportSummary, dining?: DiningItem[], lodging?: LodgingItem[], attractions?: AttractionItem[] }> } }`
     - 说明：调用 LLM 工具链与地图信息标准化，返回结构化行程。
   - `POST /api/plan/save`
-    - 入参：`{ plan_id, itinerary }`，出参：`{ ok: true }`；写库到 `itinerary_days/items`。
+    - 入参：`{ planId, itinerary }`，出参：`{ ok: true }`；写库到 `itinerary_days/items`。
   - `GET /api/plan/:id`
-    - 出参：`{ plan: TripPlan, days: ItineraryDay[], items: ItineraryItem[] }`；编辑页初次加载。
+    - 出参：`{ plan: TripPlan, itinerary: { summary?, days: ItineraryDay[] }, itemsFlat?: ItineraryItem[] }`；编辑页初次加载。
   - `GET /api/map/search?q=...&city=...`
-    - 出参：`{ pois: Array<{ id, name, location:{ lat,lng }, rating?, opening_hours?, address?, type? }> }`；统一 POI 格式。
+    - 出参：`{ pois: Array<{ id, name, location:{ lat, lng }, rating?, openingHours?, address?, categories?: string[] }> }`；统一 POI 格式。
   - `GET /api/map/route?origin=...&destination=...&type=walking|driving|transit`
-    - 出参：`{ polyline: Array<{ lat,lng }>, duration_minutes, distance_km }`；用于折线渲染与时长展示。
+    - 出参：`{ polyline: Array<{ lat, lng }>, durationMinutes: number, distanceKm: number, mode: 'walking'|'driving'|'transit' }`；单位为分钟与公里，用于折线渲染与时长展示。
   - `POST /api/voice/transcribe`
     - 入参：`FormData(audio Blob)` 或 JSON 流；出参：`{ text, confidence?, language? }`。
   - `POST /api/expense/parse`
@@ -80,10 +80,10 @@
   - `GET /api/expense/summary?plan_id=...`
     - 出参：`{ total, by_category: Record<string, number>, by_day: Record<string, number> }`；预算概览。
 - TypeScript 类型（示例）：
-  - `TripPlan`: `id`, `user_id`, `destination`, `start_date`, `end_date`, `budget_total?`, `preferences?`, `created_at`
-  - `ItineraryDay`: `id`, `trip_plan_id`, `date`, `day_budget?`, `notes?`
-  - `ItineraryItem`: `id`, `day_id`, `type`, `poi_id?`, `start_time?`, `end_time?`, `estimated_cost?`, `notes?`
-  - `Expense`: `id`, `trip_plan_id`, `amount`, `currency`, `category`, `itinerary_item_id?`, `note?`, `source`, `created_at`
+  - `TripPlan`: `id`, `userId`, `destination`, `startDate`, `endDate`, `budgetTotal?`, `preferences?`, `createdAt`
+  - `ItineraryDay`: `id`, `tripPlanId`, `date`, `dayBudget?`, `notes?`
+  - `ItineraryItem`: `id`, `dayId`, `type: 'sight'|'food'|'transport'|'hotel'|'other'`, `title`, `note?`, `poiId?`, `startTime?`, `endTime?`, `durationMinutes?`, `estimatedCost?`, `tags?: string[]`, `location?: { lat, lng }`
+  - `Expense`: `id`, `tripPlanId`, `amount`, `currency`, `category`, `itineraryItemId?`, `note?`, `source`, `createdAt`
 
 ## 地图集成（AMap）
 - SDK 注入：在 `src/app/layout.tsx` 按需注入 `<script src="https://webapi.amap.com/maps?v=2.0&key=...">`。
@@ -203,14 +203,14 @@
   - `destination`, `start_date`, `end_date`, `preferences`（节奏/兴趣/预算）。
   - `summary`（总费用估算、天数、主题特色）。
 - 每日结构：
-  - `items[]`: `{ time, title, note, type, poiId, cost_estimate, duration, tags[] }`
-  - `transport`: `{ mode, steps[], time_estimate, price_estimate }`
-  - `dining[]`: `{ name, cuisine, price_range, rating, distance, booking }`
-  - `lodging[]`: `{ name, area, price, rating, distance_to_core, amenities }`
+  - `items[]`: `{ startTime, endTime?, title, note?, type, poiId?, estimatedCost?, durationMinutes?, tags?, location? }`
+  - `transport`: `{ mode, steps?: string[], timeEstimate?: number, priceEstimate?: number }`
+  - `dining[]`: `{ name, cuisine?, priceRange?: [number, number], rating?: number, distance?: number, booking?: boolean, location?: { lat, lng } }`
+  - `lodging[]`: `{ name, area?, price?: number, rating?: number, distanceToCore?: number, amenities?: string[], location?: { lat, lng } }`
   - `attractions[]`: `{ name, ticket, best_time, tips, photo_spots }`
 - 地图：
   - `routePath[]`（坐标序列，按天或全局）。
-  - `markers[]`: `{ position, title, category, id, dayIndex }`（分类颜色与交互）。
+  - `markers[]`: `{ location: { lat, lng }, title, category, id, dayIndex, poiId? }`（分类颜色与交互）。
 
 ### 与现有接口的对接与扩展
 - 生成：`POST /api/plan/create` 返回结构化行程；若模型不支持结构化输出，后端已做解析与聚合回退。
