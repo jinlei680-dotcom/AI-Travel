@@ -1,5 +1,6 @@
 "use client"
 import { useState } from 'react'
+import { useRouter } from 'next/navigation'
 import { getSupabaseClient } from '@/lib/supabase'
 
 export default function AuthForm() {
@@ -8,6 +9,7 @@ export default function AuthForm() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [message, setMessage] = useState<string | null>(null)
+  const router = useRouter()
 
   const handleSignUp = async () => {
     const supabase = getSupabaseClient()
@@ -26,7 +28,10 @@ export default function AuthForm() {
     const { error } = await supabase.auth.signInWithPassword({ email, password })
     setLoading(false)
     if (error) setError(error.message)
-    else setMessage('登录成功')
+    else {
+      setMessage('登录成功')
+      router.push('/dashboard')
+    }
   }
 
   return (

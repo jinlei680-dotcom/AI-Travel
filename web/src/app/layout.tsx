@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import NavBar from "@/components/NavBar";
+import Providers from "@/components/Providers";
 import Script from "next/script";
 
 const geistSans = Geist({
@@ -25,19 +26,27 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   const amapKey = process.env.NEXT_PUBLIC_AMAP_KEY;
+  const amapSecurityJsCode = process.env.NEXT_PUBLIC_AMAP_SECURITY_JS_CODE;
   return (
     <html lang="en">
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
         <NavBar />
+        {amapSecurityJsCode && (
+          <Script id="amap-security" strategy="beforeInteractive">
+            {`window._AMapSecurityConfig = { securityJsCode: '${amapSecurityJsCode}' };`}
+          </Script>
+        )}
         {amapKey && (
           <Script
             src={`https://webapi.amap.com/maps?v=2.0&key=${amapKey}`}
-            strategy="afterInteractive"
+            strategy="beforeInteractive"
           />
         )}
-        {children}
+        <Providers>
+          {children}
+        </Providers>
       </body>
     </html>
   );
