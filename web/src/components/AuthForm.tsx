@@ -16,9 +16,21 @@ export default function AuthForm() {
     if (!supabase) { setError('未配置 Supabase 环境变量'); return }
     setLoading(true); setError(null); setMessage(null)
     const { error } = await supabase.auth.signUp({ email, password })
+    if (error) {
+      setLoading(false)
+      setError(error.message)
+      return
+    }
+    // 不需要邮箱验证：直接用邮箱密码登录
+    const { error: signInErr } = await supabase.auth.signInWithPassword({ email, password })
     setLoading(false)
-    if (error) setError(error.message)
-    else setMessage('注册成功，请检查邮箱完成验证或直接登录')
+    if (signInErr) {
+      // 若项目仍启用邮箱验证，这里会失败；给出明确提示
+      setMessage('注册成功。如无法自动登录，请在 Supabase 后台关闭“Email confirmations”。')
+    } else {
+      setMessage('注册并自动登录成功')
+      router.push('/')
+    }
   }
 
   const handleSignIn = async () => {
@@ -30,7 +42,7 @@ export default function AuthForm() {
     if (error) setError(error.message)
     else {
       setMessage('登录成功')
-      router.push('/dashboard')
+      router.push('/')
     }
   }
 

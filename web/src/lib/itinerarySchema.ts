@@ -20,8 +20,36 @@ export const PlanSpecInputSchema = z.object({
 export type PlanSpecInput = z.infer<typeof PlanSpecInputSchema>;
 
 export function normalizeSpec(spec: PlanSpecInput) {
-  const start_date = (spec.start_date || spec.startDate || "").slice(0, 10);
-  const end_date = (spec.end_date || spec.endDate || "").slice(0, 10);
+  function toISO(s: string): string {
+    const t = (s || "").trim();
+    if (!t) return "";
+    // Already ISO YYYY-MM-DD
+    if (/^\d{4}-\d{2}-\d{2}$/.test(t)) return t.slice(0, 10);
+    // Try native Date parse
+    const d1 = new Date(t);
+    if (!isNaN(d1.getTime())) return fmtDate(d1);
+    // Chinese formats like 2025年12月3日 / 12月3号
+    const m = t.match(/(?:(\d{4})年)?\s*(\d{1,2})月\s*(\d{1,2})[日号]?/);
+    if (m) {
+      const y = Number(m[1] || new Date().getFullYear());
+      const mo = String(Number(m[2])).padStart(2, "0");
+      const da = String(Number(m[3])).padStart(2, "0");
+      return `${y}-${mo}-${da}`;
+    }
+    // Common compact forms: MM/DD, MM.DD, MM-DD
+    const m2 = t.match(/^(\d{1,2})[./-](\d{1,2})(?:[./-](\d{2,4}))?$/);
+    if (m2) {
+      const curY = new Date().getFullYear();
+      const mm = String(Number(m2[1])).padStart(2, "0");
+      const dd = String(Number(m2[2])).padStart(2, "0");
+      const yy = m2[3] ? Number(m2[3].length === 2 ? `20${m2[3]}` : m2[3]) : curY;
+      return `${yy}-${mm}-${dd}`;
+    }
+    // Fallback: slice first 10 chars (may be invalid)
+    return t.slice(0, 10);
+  }
+  const start_date = toISO(spec.start_date || spec.startDate || "");
+  const end_date = toISO(spec.end_date || spec.endDate || "");
   return {
     destination: spec.destination,
     start_date,

@@ -10,6 +10,8 @@ import Button from "@/components/Button";
 import Input from "@/components/Input";
 import BudgetPanel from "@/components/BudgetPanel";
 import type { PlanDay } from "@/lib/itinerarySchema";
+import { getSupabaseClient } from "@/lib/supabase";
+import { savePlanToDatabase } from "@/lib/db";
 
 function useRouteQuery(params: { origin?: string; destination?: string; type?: string; originCoord?: string; destinationCoord?: string; city?: string }) {
   const { origin = "北京站", destination = "天安门", type = "driving", originCoord = "116.4336,39.9024", destinationCoord = "116.3975,39.9087", city = "" } = params;
@@ -41,6 +43,16 @@ function useRouteQuery(params: { origin?: string; destination?: string; type?: s
 
 // 已移除搜索地点与城市的显式UI；仍保留内部解析以支持语音与手动查询
 
+type TripPlanRow = {
+  id: string;
+  destination: string;
+  start_date: string;
+  end_date: string;
+  budget_total: number | null;
+  preferences: any | null;
+  created_at: string;
+};
+
 export default function PlanPage() {
   const [origin, setOrigin] = useState("北京站");
   const [destination, setDestination] = useState("天安门");
@@ -59,12 +71,17 @@ export default function PlanPage() {
   const [destInput, setDestInput] = useState("");
   const [startInput, setStartInput] = useState("");
   const [endInput, setEndInput] = useState("");
-  const [pace, setPace] = useState<"relaxed" | "standard" | "intense">("standard");
+  const [pace, setPace] = useState<"relaxed" | "standard" | "tight">("standard");
   const [interestsText, setInterestsText] = useState("");
   const [budgetInput, setBudgetInput] = useState<string>("");
 
+  // 数据库中的用户行程记录列表与当前选中
+  const [plans, setPlans] = useState<TripPlanRow[]>([]);
+  const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null);
+
   // 主页生成的行程数据（localStorage 注入）
   const [plan, setPlan] = useState<null | { destination: string; start_date: string; end_date: string; days: PlanDay[]; markers?: { position: [number, number]; title?: string }[]; source?: "llm" | "fallback" }>(null);
+  const [displayBudgetTotal, setDisplayBudgetTotal] = useState<number | null>(null);
 
   useEffect(() => {
     try {
@@ -78,10 +95,112 @@ export default function PlanPage() {
         const pj = JSON.parse(prefsRaw);
         if (pj?.pace) setPace(pj.pace);
         if (Array.isArray(pj?.interests)) setInterestsText(pj.interests.join(", "));
-        if (typeof pj?.budgetTotal === "number") setBudgetInput(String(pj.budgetTotal));
+        if (typeof pj?.budgetTotal === "number") { setBudgetInput(String(pj.budgetTotal)); setDisplayBudgetTotal(pj.budgetTotal); }
       }
     } catch {}
   }, []);
+
+  // 解析预算输入，支持 6000、6,000、6000元、约6000 等常见格式
+  const parseBudgetInput = (s: string): number | null => {
+    if (!s) return null;
+    const trimmed = String(s).trim();
+    const cleaned = trimmed
+      .replace(/[,，]/g, "")
+      .replace(/[元¥￥\s]/g, "");
+    const n = Number(cleaned);
+    return Number.isFinite(n) && n >= 0 ? n : null;
+  };
+
+  // 载入用户的所有行程记录（侧栏）
+  useEffect(() => {
+    const supabase = getSupabaseClient();
+    if (!supabase) return;
+    supabase.auth.getSession().then(async ({ data }) => {
+      if (!data.session) return;
+      const { data: rows, error } = await supabase
+        .from("trip_plans")
+        .select("id,destination,start_date,end_date,budget_total,preferences,created_at")
+        .order("created_at", { ascending: false });
+      if (!error && Array.isArray(rows)) {
+        const list = rows as TripPlanRow[];
+        setPlans(list);
+        // 初始选中逻辑：优先 localStorage 的 lastTripPlanId；
+        // 若无，则尝试用 lastPlan 的目的地与日期匹配列表；否则选最新一条
+        let initialId: string | null = null;
+        let hasLastPlan = false;
+        try { initialId = localStorage.getItem("lastTripPlanId"); } catch {}
+        try { hasLastPlan = !!localStorage.getItem("lastPlan"); } catch {}
+        if (!initialId) {
+          try {
+            const raw = localStorage.getItem("lastPlan");
+            if (raw) {
+              const obj = JSON.parse(raw);
+              const dest = String(obj?.destination || "").trim();
+              const sd = String(obj?.start_date || "").trim();
+              const ed = String(obj?.end_date || "").trim();
+              const matched = list.find((p) => String(p.destination).trim() === dest && String(p.start_date).trim() === sd && String(p.end_date).trim() === ed);
+              if (matched) initialId = String(matched.id);
+            }
+          } catch {}
+        }
+        // 只有当没有本地最新生成的行程时，才回退到列表第一条
+        if (!initialId && !hasLastPlan && list.length) initialId = String(list[0].id);
+        if (initialId) setSelectedPlanId(initialId);
+      }
+    });
+  }, []);
+
+  // 根据 selectedPlanId 加载详情到 plan（优先 preferences.plan_raw，回退到 days/items 重组）
+  useEffect(() => {
+    const supabase = getSupabaseClient();
+    if (!supabase || !selectedPlanId) return;
+    (async () => {
+      const { data: row } = await supabase
+        .from("trip_plans")
+        .select("id,destination,start_date,end_date,budget_total,preferences")
+        .eq("id", selectedPlanId)
+        .single();
+      if (!row) return;
+      const tp = row as TripPlanRow;
+      // 避免覆盖用户最新偏好：若本地存在 lastPrefs.budgetTotal，则优先使用；否则回退到数据库值
+      let latestBudget: number | null = null;
+      try {
+        const rawPrefs = localStorage.getItem("lastPrefs");
+        if (rawPrefs) {
+          const pj = JSON.parse(rawPrefs);
+          if (typeof pj?.budgetTotal === "number") latestBudget = pj.budgetTotal;
+        }
+      } catch {}
+      setDisplayBudgetTotal(typeof latestBudget === "number" ? latestBudget : (typeof tp.budget_total === "number" ? tp.budget_total : null));
+      const raw = tp.preferences?.plan_raw;
+      if (raw && raw.destination && Array.isArray(raw.days)) {
+        setPlan({ destination: raw.destination, start_date: raw.start_date, end_date: raw.end_date, days: raw.days, markers: raw.markers, source: "llm" });
+        return;
+      }
+      const { data: dayRows } = await supabase
+        .from("itinerary_days")
+        .select("id,date,day_index")
+        .eq("trip_plan_id", tp.id)
+        .order("day_index", { ascending: true });
+      const days: any[] = [];
+      for (const d of (dayRows || []) as any[]) {
+        const { data: items } = await supabase
+          .from("itinerary_items")
+          .select("id,start_time,estimated_cost,notes")
+          .eq("day_id", d.id)
+          .order("start_time", { ascending: true });
+        const mapped = (items || []).map((it: any, idx: number) => {
+          const text = String(it?.notes || "行程项目");
+          const m = text.match(/^\[(\d{2}:\d{2})\]\s*(.+)$/);
+          const time = it?.start_time || (m ? m[1] : undefined);
+          const title = m ? m[2] : text;
+          return { id: String(it.id || `${d.id}-${idx}`), time: time || undefined, title, note: undefined, costEstimate: it?.estimated_cost ? Number(it.estimated_cost) : undefined };
+        });
+        days.push({ date: d.date, items: mapped });
+      }
+      setPlan({ destination: tp.destination, start_date: tp.start_date, end_date: tp.end_date, days });
+    })();
+  }, [selectedPlanId]);
 
   useEffect(() => {
     // 行程更新时默认选中第 1 天并清空高亮
@@ -451,7 +570,29 @@ export default function PlanPage() {
   };
 
   return (
-    <div className="p-4 space-y-4">
+    <>
+      {/* 悬浮抽屉：我的旅行规划记录（鼠标悬停显示，不改变原布局） */}
+      <div className="fixed left-0 top-32 z-40 group">
+        <div className="rounded-r bg-blue-600 text-white px-2 py-1 text-xs shadow cursor-pointer">我的记录</div>
+        <div className="hidden group-hover:block mt-1">
+          <Card title="我的旅行规划记录" className="w-72">
+            <div className="max-h-80 overflow-auto space-y-2">
+              {plans.length === 0 && <div className="text-sm text-zinc-500">暂无记录，请在首页生成</div>}
+              {plans.map((p) => (
+                <button key={p.id} onClick={() => setSelectedPlanId(p.id)} className={["w-full rounded border px-3 py-2 text-left text-sm", selectedPlanId === p.id ? "border-blue-500 bg-blue-50" : "border-zinc-200 hover:bg-zinc-50"].join(" ")}> 
+                  <div className="flex items-center justify-between">
+                    <span className="font-medium text-zinc-800">{p.destination}</span>
+                    <span className="text-xs text-zinc-500">{String(p.created_at).slice(0, 10)}</span>
+                  </div>
+                  <div className="mt-1 text-xs text-zinc-600">{p.start_date} → {p.end_date}</div>
+                </button>
+              ))}
+            </div>
+          </Card>
+        </div>
+      </div>
+
+      <div className="p-4 space-y-4">
       {plan && (
         <Card title="最新生成行程" actions={<Button size="sm" variant="secondary" onClick={() => setShowPrefs(true)}>偏好与重新生成</Button>}>
           <div className="flex items-center justify-between">
@@ -465,7 +606,7 @@ export default function PlanPage() {
           </div>
           {/* 已移除顶部筛选控件以保持头部简洁 */}
           <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-2">
-            {/* 左侧：日程导航（紧凑摘要） + 左下预算管理 */}
+            {/* 左侧：日程导航（紧凑摘要） + 左下预算管理；侧栏记录改为悬浮抽屉 */}
             <div className="flex flex-col gap-2">
               {plan.days.map((d, di) => {
                 const diningCount = Array.isArray(d.dining) ? d.dining.length : 0;
@@ -498,7 +639,7 @@ export default function PlanPage() {
                   <div className="font-medium text-zinc-800">预算管理</div>
                 </div>
                 <div className="max-h-[260px] overflow-y-auto">
-                  <BudgetPanel days={plan.days as any} />
+                  <BudgetPanel days={plan.days as any} initialTotalBudget={displayBudgetTotal} />
                 </div>
               </div>
             </div>
@@ -728,16 +869,16 @@ export default function PlanPage() {
               <div className="col-span-1 sm:col-span-2">
                 <div className="text-xs text-zinc-600 mb-1">行程节奏</div>
                 <div className="flex gap-2">
-                  {(["relaxed","standard","intense"] as const).map((p) => (
-                    <button key={p} onClick={() => setPace(p)} className={["rounded border px-2 py-1 text-xs", pace===p?"border-blue-500 bg-blue-50 text-blue-700":"border-zinc-300"].join(" ")}>{p==="relaxed"?"悠闲":p==="standard"?"标准":"紧凑"}</button>
-                  ))}
+            {(["relaxed","standard","tight"] as const).map((p) => (
+              <button key={p} onClick={() => setPace(p)} className={["rounded border px-2 py-1 text-xs", pace===p?"border-blue-500 bg-blue-50 text-blue-700":"border-zinc-300"].join(" ")}>{p==="relaxed"?"悠闲":p==="standard"?"标准":"紧凑"}</button>
+            ))}
                 </div>
               </div>
               <div className="col-span-1 sm:col-span-2">
                 <input className="border px-2 py-1 rounded w-full" placeholder="兴趣偏好（逗号分隔，如：美食, 博物馆, 徒步）" value={interestsText} onChange={(e) => setInterestsText(e.target.value)} />
               </div>
               <div className="col-span-1 sm:col-span-2">
-                <input className="border px-2 py-1 rounded w-full" type="number" min="0" placeholder="总预算（元）" value={budgetInput} onChange={(e) => setBudgetInput(e.target.value)} />
+                <input className="border px-2 py-1 rounded w-full" type="text" inputMode="numeric" placeholder="总预算（元）" value={budgetInput} onChange={(e) => { setBudgetInput(e.target.value); const v = parseBudgetInput(e.target.value); setDisplayBudgetTotal(typeof v === "number" ? v : null); }} />
               </div>
             </div>
             {genError && <div className="mt-2 rounded border border-red-200 bg-red-50 p-2 text-xs text-red-700">{genError}</div>}
@@ -748,17 +889,36 @@ export default function PlanPage() {
                 setGenError(null);
                 try {
                   const interests = interestsText.split(/[,，\s]+/).map((s) => s.trim()).filter(Boolean);
+                  const parsedBudget = parseBudgetInput(budgetInput);
                   const body = {
                     destination: destInput || destination,
                     start_date: startInput || plan?.start_date || "",
                     end_date: endInput || plan?.end_date || "",
-                    preferences: { pace, ...(interests.length ? { interests } : {}), ...(budgetInput.trim() ? { budgetTotal: Number(budgetInput) } : {}) },
+                    preferences: { pace, ...(interests.length ? { interests } : {}), ...(typeof parsedBudget === "number" ? { budgetTotal: parsedBudget } : {}) },
                   };
                   const res = await fetch("/api/plan/create", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
                   if (!res.ok) { const msg = await res.text().catch(() => "生成失败"); throw new Error(msg || "生成失败"); }
                   const data = await res.json();
                   setPlan(data);
-                  try { localStorage.setItem("lastPlan", JSON.stringify(data)); localStorage.setItem("lastPrefs", JSON.stringify({ pace, interests, ...(budgetInput.trim() ? { budgetTotal: Number(budgetInput) } : {}) })); } catch {}
+                  try { localStorage.setItem("lastPlan", JSON.stringify(data)); localStorage.setItem("lastPrefs", JSON.stringify({ pace, interests, ...(typeof parsedBudget === "number" ? { budgetTotal: parsedBudget } : {}) })); } catch {}
+                  // 保存到数据库并选中该记录（与首页生成逻辑保持一致）
+                  try {
+                    const budgetVal = typeof parsedBudget === "number" ? parsedBudget : null;
+                    const saveRes = await savePlanToDatabase({
+                      destination: body.destination,
+                      start_date: body.start_date,
+                      end_date: body.end_date,
+                      days: data.days,
+                      markers: data.markers,
+                      budget_total: budgetVal,
+                    });
+                    if (saveRes?.tripPlanId) {
+                      try { localStorage.setItem("lastTripPlanId", saveRes.tripPlanId); } catch {}
+                      setSelectedPlanId(saveRes.tripPlanId);
+                    }
+                  } catch {}
+                  // 刷新预算显示
+                  if (typeof parsedBudget === "number") setDisplayBudgetTotal(parsedBudget);
                   setShowPrefs(false);
                 } catch (e: any) {
                   setGenError(e?.message || "生成失败");
@@ -779,5 +939,6 @@ export default function PlanPage() {
         />
       ) : null}
     </div>
+    </>
   );
 }

@@ -1,9 +1,13 @@
 "use client";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Input from "@/components/Input";
+import Card from "@/components/Card";
 import VoiceButton from "@/components/VoiceButton";
 import { useRouter } from "next/navigation";
+import { savePlanToDatabase } from "@/lib/db";
 import LoadingExperience from "@/components/LoadingExperience";
+import { getSupabaseClient } from "@/lib/supabase";
+import Button from "@/components/Button";
 
 type PlanItem = { id: string; time?: string; title: string; note?: string };
 type PlanDay = { date: string; items: PlanItem[] };
@@ -27,17 +31,63 @@ function parseSpecFromText(text: string) {
   const mCity = t.match(/([\u4e00-\u9fa5]+)市/);
   if (mCity) destination = mCity[1];
 
-  const mDates = Array.from(t.matchAll(/(20\d{2}-\d{2}-\d{2})/g)).map(m => m[1]);
   const today = new Date();
   const fmt = (d: Date) => d.toISOString().slice(0, 10);
+  const pad2 = (n: number) => String(n).padStart(2, "0");
+  const toISO = (s: string) => {
+    const x = s.trim();
+    if (!x) return "";
+    if (/^\d{4}-\d{1,2}-\d{1,2}$/.test(x)) {
+      const [y,m,d] = x.split("-");
+      return `${y}-${pad2(Number(m))}-${pad2(Number(d))}`;
+    }
+    const d1 = new Date(x);
+    if (!isNaN(d1.getTime())) return fmt(d1);
+    const mZh = x.match(/(?:(\d{4})年)?\s*(\d{1,2})月\s*(\d{1,2})[日号]?/);
+    if (mZh) {
+      const y = Number(mZh[1] || today.getFullYear());
+      return `${y}-${pad2(Number(mZh[2]))}-${pad2(Number(mZh[3]))}`;
+    }
+    const m2 = x.match(/^(\d{1,2})[./-](\d{1,2})(?:[./-](\d{2,4}))?$/);
+    if (m2) {
+      const y = m2[3] ? Number(m2[3].length === 2 ? `20${m2[3]}` : m2[3]) : today.getFullYear();
+      return `${y}-${pad2(Number(m2[1]))}-${pad2(Number(m2[2]))}`;
+    }
+    return x.slice(0, 10);
+  };
+
+  // 提取日期范围（支持中文“到/至”、短横线、波浪线）
   let start = fmt(today);
   let end = fmt(new Date(today.getTime() + 2 * 86400000));
-  if (mDates.length >= 2) { start = mDates[0]; end = mDates[1]; }
-  else if (mDates.length === 1) { start = mDates[0]; const d1 = new Date(mDates[0]); end = fmt(new Date(d1.getTime() + 2 * 86400000)); }
+  const zhRange = t.match(/(?:(\d{4})年)?\s*(\d{1,2})月\s*(\d{1,2})[日号]?\s*(?:至|到|~|—|–|\-|到)\s*(?:(\d{4})年)?\s*(\d{1,2})月\s*(\d{1,2})[日号]?/);
+  if (zhRange) {
+    const sy = Number(zhRange[1] || today.getFullYear());
+    const sm = pad2(Number(zhRange[2]));
+    const sd = pad2(Number(zhRange[3]));
+    const ey = Number(zhRange[4] || sy);
+    const em = pad2(Number(zhRange[5]));
+    const ed = pad2(Number(zhRange[6]));
+    start = `${sy}-${sm}-${sd}`;
+    end = `${ey}-${em}-${ed}`;
+  } else {
+    const isoMatches = Array.from(t.matchAll(/\b(20\d{2}-\d{1,2}-\d{1,2})\b/g)).map(m => toISO(m[1]));
+    if (isoMatches.length >= 2) {
+      start = isoMatches[0]; end = isoMatches[1];
+    } else if (isoMatches.length === 1) {
+      start = isoMatches[0]; const d1 = new Date(start); end = fmt(new Date(d1.getTime() + 2 * 86400000));
+    } else {
+      const compactMatches = Array.from(t.matchAll(/(\d{1,2}[./-]\d{1,2}(?:[./-]\d{2,4})?)/g)).map(m => toISO(m[1]));
+      if (compactMatches.length >= 2) {
+        start = compactMatches[0]; end = compactMatches[1];
+      } else if (compactMatches.length === 1) {
+        start = compactMatches[0]; const d1 = new Date(start); end = fmt(new Date(d1.getTime() + 2 * 86400000));
+      }
+    }
+  }
 
-  let pace: "relaxed" | "standard" | "intense" = "standard";
+  let pace: "relaxed" | "standard" | "tight" = "standard";
   if (/悠闲|轻松|休闲|慢/.test(t)) pace = "relaxed";
-  if (/紧凑|高强度|赶场|多安排/.test(t)) pace = "intense";
+  if (/紧凑|高强度|赶场|多安排/.test(t)) pace = "tight";
   // 预算提取（“预算5000元”、“预算：8000”、“¥6000”等）
   let budgetTotal: number | undefined = undefined;
   const mb = t.match(/预算[:：\s]*([\d,.]+)/) || t.match(/¥\s*([\d,.]+)/) || t.match(/([\d,.]+)\s*元/);
@@ -52,6 +102,8 @@ export default function HomePage() {
   const [text, setText] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showLoginPrompt, setShowLoginPrompt] = useState(false);
+  const [plans, setPlans] = useState<Array<{ id: string; destination: string; start_date: string; end_date: string; created_at: string }>>([]);
   const router = useRouter();
   const subtitle = (() => {
     const s = parseSpecFromText(text || "");
@@ -66,6 +118,20 @@ export default function HomePage() {
     setLoading(true);
     setError(null);
     try {
+      // 先检查登录状态
+      const supabase = getSupabaseClient();
+      if (!supabase) {
+        setError("Supabase 环境变量未配置");
+        setLoading(false);
+        return;
+      }
+      const { data: sessionData } = await supabase.auth.getSession();
+      if (!sessionData.session) {
+        setShowLoginPrompt(true);
+        setLoading(false);
+        return;
+      }
+
       const res = await fetch("/api/plan/create", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -82,7 +148,24 @@ export default function HomePage() {
         const prefs = { pace: spec.preferences?.pace, ...(spec.preferences?.budgetTotal ? { budgetTotal: spec.preferences.budgetTotal } : {}) };
         localStorage.setItem("lastPrefs", JSON.stringify(prefs));
       } catch {}
-      router.push("/plan");
+      // 自动保存到数据库（前置已确保登录）
+      try {
+        const resSave = await savePlanToDatabase({
+          destination: data.destination,
+          start_date: data.start_date,
+          end_date: data.end_date,
+          days: data.days as any,
+          markers: data.markers,
+          budget_total: spec.preferences?.budgetTotal ?? null,
+        });
+        if (resSave?.tripPlanId) {
+          try { localStorage.setItem("lastTripPlanId", resSave.tripPlanId); } catch {}
+        }
+        router.push("/plan");
+      } catch (e) {
+        // 保存失败依然进入本地行程查看页
+        router.push("/plan");
+      }
     } catch (e: any) {
       setError(e?.message || "生成失败");
     } finally {
@@ -90,8 +173,56 @@ export default function HomePage() {
     }
   };
 
+  // 加载用户的旅行计划记录（首页侧栏）
+  useEffect(() => {
+    const supabase = getSupabaseClient();
+    if (!supabase) return;
+    supabase.auth.getSession().then(async ({ data }) => {
+      if (!data.session) return;
+      const { data: rows, error } = await supabase
+        .from("trip_plans")
+        .select("id,destination,start_date,end_date,created_at")
+        .order("created_at", { ascending: false });
+      if (!error && Array.isArray(rows)) {
+        setPlans(rows as any[]);
+      }
+    });
+  }, []);
+
   return (
-    <div className="mx-auto max-w-3xl px-4 py-16">
+    <>
+      {/* 悬浮抽屉：我的旅行规划记录（鼠标悬停显示，不改变原布局） */}
+      <div className="fixed left-0 top-32 z-40 group">
+        <div className="rounded-r bg-blue-600 text-white px-2 py-1 text-xs shadow cursor-pointer">我的记录</div>
+        <div className="hidden group-hover:block mt-1">
+          <Card title="我的旅行规划记录" className="w-72">
+            <div className="max-h-80 overflow-auto space-y-2">
+              {plans.length === 0 && (
+                <div className="text-sm text-zinc-500">暂无记录，登录后生成行程即可出现</div>
+              )}
+              {plans.map((p) => (
+                <button
+                  key={p.id}
+                  onClick={() => {
+                    try { localStorage.setItem("lastTripPlanId", String(p.id)); } catch {}
+                    router.push("/plan");
+                  }}
+                  className="w-full rounded border px-3 py-2 text-left text-sm border-zinc-200 hover:bg-zinc-50"
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="font-medium text-zinc-800">{p.destination}</span>
+                    <span className="text-xs text-zinc-500">{String(p.created_at).slice(0, 10)}</span>
+                  </div>
+                  <div className="mt-1 text-xs text-zinc-600">{p.start_date} → {p.end_date}</div>
+                </button>
+              ))}
+            </div>
+          </Card>
+        </div>
+      </div>
+
+      {/* 原首页内容 */}
+      <div className="mx-auto max-w-3xl px-4 py-16">
       {loading ? <LoadingExperience title="正在为你生成行程" subtitle={subtitle} estimatedSeconds={120} /> : null}
       <h1 className="text-2xl font-semibold">AI 旅行助手</h1>
       <p className="mt-3 text-zinc-600">一个输入框，支持语音识别；点击开始规划。</p>
@@ -122,6 +253,19 @@ export default function HomePage() {
           开始规划
         </button>
       </div>
-    </div>
+      {showLoginPrompt && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="bg-white rounded-lg shadow-lg p-6 w-full max-w-sm">
+            <div className="text-lg font-semibold">请先登录</div>
+            <p className="mt-2 text-sm text-zinc-600">登录后才能进行行程规划并自动保存到数据库。</p>
+            <div className="mt-4 flex gap-2 justify-end">
+              <Button variant="secondary" onClick={() => setShowLoginPrompt(false)}>取消</Button>
+              <Button onClick={() => router.push("/login")}>前往登录</Button>
+            </div>
+          </div>
+        </div>
+      )}
+      </div>
+    </>
   );
 }

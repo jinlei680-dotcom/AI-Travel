@@ -6,7 +6,7 @@ type DiningItem = { name: string; priceRange?: PriceRange };
 type LodgingItem = { name: string; price?: number };
 type TransportSummary = { mode?: string; timeEstimate?: number; priceEstimate?: number };
 type AttractionItem = { name: string; ticket?: number | string };
-type PlanItem = { id: string; time?: string; title: string; note?: string };
+type PlanItem = { id: string; time?: string; title: string; note?: string; costEstimate?: number };
 type PlanDay = {
   date: string;
   items: PlanItem[];
@@ -18,6 +18,7 @@ type PlanDay = {
 
 type BudgetPanelProps = {
   days: PlanDay[];
+  initialTotalBudget?: number | null;
 };
 
 function avgPrice(range?: PriceRange): number {
@@ -36,36 +37,45 @@ function ticketToNumber(t?: number | string): number {
   return Number.isFinite(n) ? n : 0;
 }
 
-export default function BudgetPanel({ days }: BudgetPanelProps) {
-  const [totalBudget, setTotalBudget] = useState<number | null>(null);
+export default function BudgetPanel({ days, initialTotalBudget }: BudgetPanelProps) {
+  const [totalBudget, setTotalBudget] = useState<number | null>(
+    typeof initialTotalBudget === "number" ? initialTotalBudget : null
+  );
 
+  // 当父组件传入的初始总预算发生变化时，优先采用该值
   useEffect(() => {
+    if (typeof initialTotalBudget === "number") {
+      setTotalBudget(initialTotalBudget);
+      return;
+    }
     try {
       const raw = localStorage.getItem("lastPrefs");
       if (raw) {
         const p = JSON.parse(raw);
+        // 若未通过 props 传入，则使用本地存储中的预算
         if (typeof p?.budgetTotal === "number") setTotalBudget(p.budgetTotal);
       }
     } catch {}
-  }, []);
+  }, [initialTotalBudget]);
 
   const { byDay, totals } = useMemo(() => {
-    const byDay: { date: string; transport: number; dining: number; lodging: number; tickets: number; total: number }[] = [];
-    let transport = 0, dining = 0, lodging = 0, tickets = 0;
+    const byDay: { date: string; transport: number; dining: number; lodging: number; tickets: number; activities: number; total: number }[] = [];
+    let transport = 0, dining = 0, lodging = 0, tickets = 0, activities = 0;
     for (const d of days || []) {
       const t = Number(d.transport?.priceEstimate) || 0;
       const dine = (d.dining || []).reduce((s, it) => s + avgPrice(it.priceRange), 0);
       const lodge = (d.lodging || []).reduce((s, it) => s + (Number(it.price) || 0), 0);
       const tick = (d.attractions || []).reduce((s, it) => s + ticketToNumber(it.ticket), 0);
-      const total = t + dine + lodge + tick;
-      byDay.push({ date: d.date, transport: t, dining: dine, lodging: lodge, tickets: tick, total });
-      transport += t; dining += dine; lodging += lodge; tickets += tick;
+      const act = (d.items || []).reduce((s, it) => s + (Number(it.costEstimate) || 0), 0);
+      const total = t + dine + lodge + tick + act;
+      byDay.push({ date: d.date, transport: t, dining: dine, lodging: lodge, tickets: tick, activities: act, total });
+      transport += t; dining += dine; lodging += lodge; tickets += tick; activities += act;
     }
-    const grand = transport + dining + lodging + tickets;
-    return { byDay, totals: { transport, dining, lodging, tickets, grand } };
+    const grand = transport + dining + lodging + tickets + activities;
+    return { byDay, totals: { transport, dining, lodging, tickets, activities, grand } };
   }, [days]);
 
-  const maxCategory = Math.max(1, totals.grand, totals.transport, totals.dining, totals.lodging, totals.tickets);
+  const maxCategory = Math.max(1, totals.grand, totals.transport, totals.dining, totals.lodging, totals.tickets, totals.activities);
 
   return (
     <div className="rounded-lg border border-zinc-200 p-3">
@@ -95,6 +105,7 @@ export default function BudgetPanel({ days }: BudgetPanelProps) {
             { label: "餐饮", value: totals.dining, color: "bg-orange-500" },
             { label: "住宿", value: totals.lodging, color: "bg-purple-500" },
             { label: "门票", value: totals.tickets, color: "bg-emerald-500" },
+            { label: "活动", value: totals.activities, color: "bg-pink-500" },
           ].map((c) => (
             <div key={c.label} className="text-xs">
               <div className="flex items-center justify-between">

@@ -554,8 +554,8 @@ export async function POST(req: Request) {
           required: ["destination", "start_date", "end_date", "days"],
           additionalProperties: false,
         } as any;
-        const sys2 = `只输出严格 JSON；字段与层级必须与 Schema 完全一致：${JSON.stringify(schemaSnippet)}。生成 ${sd} 到 ${ed} 的单日行程；每天：lodging 仅 1 条且为具体酒店；dining ≤2；attractions ≤2；items 必须含 place.name、time 与 costEstimate；transport 必填 mode/timeEstimate/priceEstimate；所有地点必须在“${destination}”。预算约束：${budgetTotal !== undefined ? `总预算 ¥${Math.round(budgetTotal)}，确保与预算差额不超过 ¥1000。` : `若提供预算，确保与预算差额不超过 ¥1000。`}最终输出为完整闭合 JSON。`;
-        const sysBudget2 = `人数与预算规则：若提供出行人数 partySize，则所有金额按“全体同行总额”给出（不是人均）。\n- dining.priceRange 两端均为本次就餐总额（人均×人数）。\n- transport.priceEstimate 为当日交通总额。\n- lodging.price 为每晚总房费；默认 2 人/间，房间数=ceil(partySize/2)。\n- attractions.ticket 为门票总额（人均票价需乘人数）。\n- 若提供预算 budgetTotal，合计费用目标在预算的 80%–100% 区间。`;
+        const sys2 = `只输出严格 JSON；字段与层级必须与 Schema 完全一致：${JSON.stringify(schemaSnippet)}。生成 ${sd} 的单日行程；要求：当日 day.date 必须严格等于 ${sd}；每天：lodging 仅 1 条且为具体酒店；dining ≤2；attractions ≤2；items 必须含 place.name、time 与 costEstimate；transport 必填 mode/timeEstimate/priceEstimate；所有地点必须在“${destination}”。预算约束：${budgetTotal !== undefined ? `总预算 ¥${Math.round(budgetTotal)}，总费用目标控制在预算的 95%–100% 区间，优先不超过预算；如需微调，允许在预算±¥1000 范围内。` : `若提供预算，总费用目标控制在预算的 95%–100% 区间，优先不超过预算；如需微调，允许在预算±¥1000 范围内。`}最终输出为完整闭合 JSON。`;
+        const sysBudget2 = `人数与预算规则：若提供出行人数 partySize，则所有金额按“全体同行总额”给出（不是人均）。\n- dining.priceRange 两端均为本次就餐总额（人均×人数）。\n- transport.priceEstimate 为当日交通总额。\n- lodging.price 为每晚总房费；默认 2 人/间，房间数=ceil(partySize/2)。\n- attractions.ticket 为门票总额（人均票价需乘人数）。\n- items.costEstimate 计入活动支出。\n- 若提供预算 budgetTotal，合计费用目标在预算的 95%–100% 区间，优先不超过预算；必要时先降低餐饮/可选活动支出，其次选择更经济的住宿。`;
         const sysDiningRulesDay = `结构化餐饮与时间安排规则：\n- 当日必须返回恰好 3 条 dining（早餐/午餐/晚餐），并且各自的 name 中须包含“早餐/午餐/晚餐”关键词以明确餐次。\n- items 的 time 必须覆盖全天多个时间段：至少包含早晨/上午、中午/下午、夜间。\n- 每条 items 必须包含 place.name 与 time，并提供可计算的 costEstimate（元）。`;
         const user = `目的地:${destination}; 日期范围:${sd}~${ed}; ${partySize !== undefined ? `出行人数:${Math.max(1, Math.round(partySize))}人; ` : ""}参考POI:${candidatePOIs.map((p) => `${p.name}(${p.lng},${p.lat})`).join(";")}`;
         const baseBody: any = {
@@ -720,7 +720,7 @@ export async function POST(req: Request) {
   // —— 预算校正：将总估算控制在“总预算±1000”范围内（尽量贴近总预算） ——
   // 仅在提供了总预算时进行；优先通过餐饮价格区间伸缩来贴近目标，其次才尝试轻微调整住宿价格。
   function computeTotals(ds: PlanDay[]) {
-    let transport = 0, dining = 0, lodging = 0, tickets = 0;
+    let transport = 0, dining = 0, lodging = 0, tickets = 0, activities = 0;
     for (const d of ds || []) {
       transport += Number(d.transport?.priceEstimate) || 0;
       // 与前端保持一致：餐饮按区间上限估算
@@ -730,14 +730,15 @@ export async function POST(req: Request) {
         const up = Number.isFinite(a) && Number.isFinite(b) ? Math.max(a, b) : 0;
         return s + up;
       }, 0);
+      activities += (d.items || []).reduce((s, it: any) => s + (Number(it?.costEstimate) || 0), 0);
       lodging += (d.lodging || []).reduce((s, it: any) => s + (Number(it?.price) || 0), 0);
       tickets += (d.attractions || []).reduce((s, it: any) => {
         const t = typeof it?.ticket === "number" ? it.ticket : Number(it?.ticket);
         return s + (Number.isFinite(t) ? t : 0);
       }, 0);
     }
-    const grand = transport + dining + lodging + tickets;
-    return { transport, dining, lodging, tickets, grand } as const;
+    const grand = transport + dining + lodging + tickets + activities;
+    return { transport, dining, lodging, tickets, activities, grand } as const;
   }
 
   function normalizeBudgetByTotal(ds: PlanDay[], budget?: number): PlanDay[] {
@@ -748,7 +749,7 @@ export async function POST(req: Request) {
     const sums = computeTotals(ds);
     if (sums.grand >= lower && sums.grand <= upper) return ds;
     const target = b; // 尽量贴近用户总预算本身
-    const nonDining = sums.transport + sums.lodging + sums.tickets;
+    const nonDining = sums.transport + sums.lodging + sums.tickets + sums.activities;
     const diningTotal = Math.max(0, sums.dining);
 
     let out = ds;
@@ -780,6 +781,12 @@ export async function POST(req: Request) {
       }));
     }
     return out;
+  }
+
+  // 将返回的 days 强制对齐到用户提供的日期序列，避免模型偏移日期
+  if (days && days.length) {
+    const allDates = allDays.map((d) => fmtDateLocal(d));
+    days = repairDays({ rawDays: days, allDates, destination, pace });
   }
 
   if (days && Number.isFinite(budgetTotal)) {
