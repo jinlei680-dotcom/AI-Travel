@@ -12,3 +12,6 @@ README*.md
 coverage
 .vscode
 .DS_Store
+.env
+.env.*
+.env.local

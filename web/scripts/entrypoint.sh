@@ -1,11 +1,7 @@
 #!/bin/sh
 set -e
 
-# Source environment variables from .env.local if present
-if [ -f ./.env.local ]; then
-  # Export all non-comment lines as environment variables
-  export $(grep -v '^#' ./.env.local | xargs)
-fi
+# 不再读取容器内的 .env.local；改为依赖运行时注入的环境变量（-e 或 --env-file）
 
 # Default port 3000 unless overridden by PORT env
 PORT_TO_USE=${PORT:-3000}
