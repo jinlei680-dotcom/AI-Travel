@@ -65,3 +65,11 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+
+      - name: Diagnostic - plain docker build without push (show logs)
+        shell: bash
+        run: |
+          export DOCKER_CLI_HINTS=false
+          export BUILDKIT_PROGRESS=plain
+          echo "Running diagnostic docker build to show detailed Next.js logs..."
+          docker build --pull --no-cache --progress=plain -t local-test -f ./web/Dockerfile ./web || true
