@@ -74,3 +74,27 @@ docker run --rm --env-file ./.env -p 3000:3000 ai-travel-web:latest
 - `.dockerignore`：排除不必要的构建上下文
 
 如需自动化发布与版本管理，我可以帮助你添加 GitHub Actions 流水线，自动构建并推送到私有镜像仓库。
+
+## 使用 GitHub Actions 推送到阿里云镜像仓库（ACR）
+
+已在仓库添加工作流：`.github/workflows/docker-acr.yml`，可在以下事件触发构建与推送：
+- 推送到 `main` 分支（生成 `latest` 与 `sha` 标签）
+- 推送标签 `v*` 或 `release-*`（生成对应版本标签）
+- 手动触发（workflow_dispatch）
+
+在 GitHub 仓库中配置以下 Secrets（Settings -> Secrets and variables -> Actions）：
+- `ACR_REGISTRY`：例如 `registry.cn-hangzhou.aliyuncs.com`
+- `ACR_NAMESPACE`：你的命名空间，例如 `your-namespace`
+- `ACR_REPOSITORY`：仓库名，例如 `ai-travel-web`
+- `ACR_USERNAME`、`ACR_PASSWORD`：阿里云 ACR 登录凭证（推荐使用临时 Token）
+
+工作流会构建镜像：
+`$ACR_REGISTRY/$ACR_NAMESPACE/$ACR_REPOSITORY:latest`（仅 main）
+`$ACR_REGISTRY/$ACR_NAMESPACE/$ACR_REPOSITORY:<git-sha>`
+`$ACR_REGISTRY/$ACR_NAMESPACE/$ACR_REPOSITORY:<tag>`（当推送标签）
+
+用户拉取与运行：
+```bash
+docker pull registry.cn-hangzhou.aliyuncs.com/your-namespace/ai-travel-web:latest
+docker run --rm --env-file ./.env -p 3000:3000 registry.cn-hangzhou.aliyuncs.com/your-namespace/ai-travel-web:latest
+```
