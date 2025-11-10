@@ -6,6 +6,8 @@ create table if not exists public.users (
   nickname text,
   language text default 'zh',
   currency text default 'CNY',
+  -- 记录用户最近一次在前端选择查看的行程，便于跨设备恢复上下文
+  last_trip_plan_id uuid,
   created_at timestamp with time zone default now()
 );
 

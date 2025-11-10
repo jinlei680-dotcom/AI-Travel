@@ -79,26 +79,44 @@ export default function PlanPage() {
   const [plans, setPlans] = useState<TripPlanRow[]>([]);
   const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null);
 
-  // 主页生成的行程数据（localStorage 注入）
+  // 页面展示的行程与预算来自数据库
   const [plan, setPlan] = useState<null | { destination: string; start_date: string; end_date: string; days: PlanDay[]; markers?: { position: [number, number]; title?: string }[]; source?: "llm" | "fallback" }>(null);
   const [displayBudgetTotal, setDisplayBudgetTotal] = useState<number | null>(null);
 
-  useEffect(() => {
+  // 删除旅行规划（联动删除 itinerary_items -> itinerary_days -> trip_plans）
+  const handleDeletePlan = async (id: string) => {
+    if (!id) return;
+    if (!window.confirm("确认删除该旅行规划记录？该操作不可撤销。")) return;
+    const supabase = getSupabaseClient();
+    if (!supabase) return;
     try {
-      const raw = localStorage.getItem("lastPlan");
-      if (raw) {
-        const obj = JSON.parse(raw);
-        if (obj && obj.destination && obj.days) setPlan(obj);
+      const { data: session } = await supabase.auth.getSession();
+      if (!session.session) { setGenError("请先登录"); return; }
+      // 删除关联的 items -> days -> plan
+      const { data: days } = await supabase
+        .from("itinerary_days")
+        .select("id")
+        .eq("trip_plan_id", id);
+      const dayIds: string[] = (days || []).map((d: any) => d.id);
+      if (dayIds.length) {
+        await supabase.from("itinerary_items").delete().in("day_id", dayIds);
       }
-      const prefsRaw = localStorage.getItem("lastPrefs");
-      if (prefsRaw) {
-        const pj = JSON.parse(prefsRaw);
-        if (pj?.pace) setPace(pj.pace);
-        if (Array.isArray(pj?.interests)) setInterestsText(pj.interests.join(", "));
-        if (typeof pj?.budgetTotal === "number") { setBudgetInput(String(pj.budgetTotal)); setDisplayBudgetTotal(pj.budgetTotal); }
+      await supabase.from("itinerary_days").delete().eq("trip_plan_id", id);
+      const { error: delErr } = await supabase.from("trip_plans").delete().eq("id", id);
+      if (delErr) { setGenError(delErr.message); return; }
+      setPlans((prev: TripPlanRow[]) => prev.filter((p: TripPlanRow) => String(p.id) !== String(id)));
+      if (selectedPlanId === id) {
+        setSelectedPlanId(null);
+        // 清空用户最近选择记录
+        await supabase
+          .from("users")
+          .update({ last_trip_plan_id: null })
+          .eq("id", session.session.user.id);
       }
-    } catch {}
-  }, []);
+    } catch (e: any) {
+      setGenError(e?.message || "删除失败");
+    }
+  };
 
   // 解析预算输入，支持 6000、6,000、6000元、约6000 等常见格式
   const parseBudgetInput = (s: string): number | null => {
@@ -121,32 +139,24 @@ export default function PlanPage() {
         .from("trip_plans")
         .select("id,destination,start_date,end_date,budget_total,preferences,created_at")
         .order("created_at", { ascending: false });
-      if (!error && Array.isArray(rows)) {
-        const list = rows as TripPlanRow[];
-        setPlans(list);
-        // 初始选中逻辑：优先 localStorage 的 lastTripPlanId；
-        // 若无，则尝试用 lastPlan 的目的地与日期匹配列表；否则选最新一条
-        let initialId: string | null = null;
-        let hasLastPlan = false;
-        try { initialId = localStorage.getItem("lastTripPlanId"); } catch {}
-        try { hasLastPlan = !!localStorage.getItem("lastPlan"); } catch {}
-        if (!initialId) {
-          try {
-            const raw = localStorage.getItem("lastPlan");
-            if (raw) {
-              const obj = JSON.parse(raw);
-              const dest = String(obj?.destination || "").trim();
-              const sd = String(obj?.start_date || "").trim();
-              const ed = String(obj?.end_date || "").trim();
-              const matched = list.find((p) => String(p.destination).trim() === dest && String(p.start_date).trim() === sd && String(p.end_date).trim() === ed);
-              if (matched) initialId = String(matched.id);
-            }
-          } catch {}
-        }
-        // 只有当没有本地最新生成的行程时，才回退到列表第一条
-        if (!initialId && !hasLastPlan && list.length) initialId = String(list[0].id);
-        if (initialId) setSelectedPlanId(initialId);
-      }
+       if (!error && Array.isArray(rows)) {
+         const list = rows as TripPlanRow[];
+         setPlans(list);
+         // 用数据库用户偏好恢复最近选中的行程；如果不存在则选最新一条
+         let initialId: string | null = null;
+         const { data: prefRow } = await supabase
+           .from("users")
+           .select("last_trip_plan_id")
+           .eq("id", data.session.user.id)
+           .single();
+         const prefId = prefRow?.last_trip_plan_id ? String(prefRow.last_trip_plan_id) : null;
+         if (prefId && list.some((p) => String(p.id) === prefId)) {
+           initialId = prefId;
+         } else if (list.length) {
+           initialId = String(list[0].id);
+         }
+         if (initialId) setSelectedPlanId(initialId);
+       }
     });
   }, []);
 
@@ -162,16 +172,11 @@ export default function PlanPage() {
         .single();
       if (!row) return;
       const tp = row as TripPlanRow;
-      // 避免覆盖用户最新偏好：若本地存在 lastPrefs.budgetTotal，则优先使用；否则回退到数据库值
-      let latestBudget: number | null = null;
-      try {
-        const rawPrefs = localStorage.getItem("lastPrefs");
-        if (rawPrefs) {
-          const pj = JSON.parse(rawPrefs);
-          if (typeof pj?.budgetTotal === "number") latestBudget = pj.budgetTotal;
-        }
-      } catch {}
-      setDisplayBudgetTotal(typeof latestBudget === "number" ? latestBudget : (typeof tp.budget_total === "number" ? tp.budget_total : null));
+      // 显示预算优先使用数据库值，保证“总预算”随记录变化
+      setDisplayBudgetTotal(typeof tp.budget_total === "number" ? tp.budget_total : null);
+      if (typeof tp.budget_total === "number") setBudgetInput(String(tp.budget_total));
+      if (tp.preferences?.pace) setPace(tp.preferences.pace);
+      if (Array.isArray(tp.preferences?.interests)) setInterestsText(tp.preferences.interests.join(", "));
       const raw = tp.preferences?.plan_raw;
       if (raw && raw.destination && Array.isArray(raw.days)) {
         setPlan({ destination: raw.destination, start_date: raw.start_date, end_date: raw.end_date, days: raw.days, markers: raw.markers, source: "llm" });
@@ -579,13 +584,30 @@ export default function PlanPage() {
             <div className="max-h-80 overflow-auto space-y-2">
               {plans.length === 0 && <div className="text-sm text-zinc-500">暂无记录，请在首页生成</div>}
               {plans.map((p) => (
-                <button key={p.id} onClick={() => setSelectedPlanId(p.id)} className={["w-full rounded border px-3 py-2 text-left text-sm", selectedPlanId === p.id ? "border-blue-500 bg-blue-50" : "border-zinc-200 hover:bg-zinc-50"].join(" ")}> 
+                <div key={p.id} className={["w-full rounded border px-3 py-2 text-left text-sm", selectedPlanId === p.id ? "border-blue-500 bg-blue-50" : "border-zinc-200 hover:bg-zinc-50"].join(" ")}>
                   <div className="flex items-center justify-between">
-                    <span className="font-medium text-zinc-800">{p.destination}</span>
-                    <span className="text-xs text-zinc-500">{String(p.created_at).slice(0, 10)}</span>
+                    <button
+                      onClick={async () => {
+                        const supabase = getSupabaseClient();
+                        if (supabase) {
+                          const { data } = await supabase.auth.getSession();
+                          if (data.session) {
+                            await supabase
+                              .from("users")
+                              .upsert({ id: data.session.user.id, last_trip_plan_id: p.id }, { onConflict: "id" });
+                          }
+                        }
+                        setSelectedPlanId(p.id);
+                      }}
+                      className="flex-1 text-left"
+                    >
+                      <div className="font-medium text-zinc-800">{p.destination}</div>
+                      <div className="mt-1 text-xs text-zinc-600">{p.start_date} → {p.end_date}</div>
+                    </button>
+                    <button onClick={() => handleDeletePlan(String(p.id))} className="ml-2 text-xs text-red-600 hover:text-red-700">删除</button>
                   </div>
-                  <div className="mt-1 text-xs text-zinc-600">{p.start_date} → {p.end_date}</div>
-                </button>
+                  <div className="mt-1 text-[11px] text-zinc-500">{String(p.created_at).slice(0, 10)}</div>
+                </div>
               ))}
             </div>
           </Card>
@@ -605,9 +627,9 @@ export default function PlanPage() {
             <Badge variant="gray">{plan.start_date} → {plan.end_date}</Badge>
           </div>
           {/* 已移除顶部筛选控件以保持头部简洁 */}
-          <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-2">
+          <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-2 lg:min-h-[70vh]">
             {/* 左侧：日程导航（紧凑摘要） + 左下预算管理；侧栏记录改为悬浮抽屉 */}
-            <div className="flex flex-col gap-2">
+            <div className="flex flex-col gap-2 h-full">
               {plan.days.map((d, di) => {
                 const diningCount = Array.isArray(d.dining) ? d.dining.length : 0;
                 const lodgingCount = Array.isArray(d.lodging) ? d.lodging.length : 0;
@@ -633,18 +655,18 @@ export default function PlanPage() {
                   </button>
                 );
               })}
-              {/* 紧凑预算管理：默认展开，放置于左侧底部空白区域 */}
-              <div className="mt-2 rounded border border-zinc-200 bg-white/70 p-2 text-[12px] text-zinc-700">
+              {/* 紧凑预算管理：默认展开，占据剩余空间 */}
+              <div className="mt-2 rounded border border-zinc-200 bg-white/70 p-2 text-[12px] text-zinc-700 flex-1 flex flex-col">
                 <div className="mb-1 flex items-center justify-between">
                   <div className="font-medium text-zinc-800">预算管理</div>
                 </div>
-                <div className="max-h-[260px] overflow-y-auto">
-                  <BudgetPanel days={plan.days as any} initialTotalBudget={displayBudgetTotal} />
+                <div className="flex-1 overflow-y-auto">
+                  <BudgetPanel key={selectedPlanId || 'none'} planId={selectedPlanId} days={plan.days as any} initialTotalBudget={displayBudgetTotal} />
                 </div>
               </div>
             </div>
             {/* 右侧：选中当天的详细信息（折叠集中显示） */}
-            <div className="space-y-3">
+            <div className="space-y-3 h-full">
               <Card title={`${plan.days[selectedDay]?.date || ""} 详细`}>
                 {(() => {
                   const d = plan.days[selectedDay];
@@ -900,7 +922,6 @@ export default function PlanPage() {
                   if (!res.ok) { const msg = await res.text().catch(() => "生成失败"); throw new Error(msg || "生成失败"); }
                   const data = await res.json();
                   setPlan(data);
-                  try { localStorage.setItem("lastPlan", JSON.stringify(data)); localStorage.setItem("lastPrefs", JSON.stringify({ pace, interests, ...(typeof parsedBudget === "number" ? { budgetTotal: parsedBudget } : {}) })); } catch {}
                   // 保存到数据库并选中该记录（与首页生成逻辑保持一致）
                   try {
                     const budgetVal = typeof parsedBudget === "number" ? parsedBudget : null;
@@ -913,7 +934,18 @@ export default function PlanPage() {
                       budget_total: budgetVal,
                     });
                     if (saveRes?.tripPlanId) {
-                      try { localStorage.setItem("lastTripPlanId", saveRes.tripPlanId); } catch {}
+                      // 将新生成的行程记录为用户最近选择
+                      try {
+                        const supabase = getSupabaseClient();
+                        if (supabase) {
+                          const { data } = await supabase.auth.getSession();
+                          if (data.session) {
+                            await supabase
+                              .from("users")
+                              .upsert({ id: data.session.user.id, last_trip_plan_id: saveRes.tripPlanId }, { onConflict: "id" });
+                          }
+                        }
+                      } catch {}
                       setSelectedPlanId(saveRes.tripPlanId);
                     }
                   } catch {}

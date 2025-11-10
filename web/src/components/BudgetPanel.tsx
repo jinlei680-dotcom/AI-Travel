@@ -1,5 +1,6 @@
 "use client";
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState, useRef } from "react";
+import { getSupabaseClient } from "@/lib/supabase";
 
 type PriceRange = [number, number];
 type DiningItem = { name: string; priceRange?: PriceRange };
@@ -19,6 +20,7 @@ type PlanDay = {
 type BudgetPanelProps = {
   days: PlanDay[];
   initialTotalBudget?: number | null;
+  planId: string | null;
 };
 
 function avgPrice(range?: PriceRange): number {
@@ -37,26 +39,94 @@ function ticketToNumber(t?: number | string): number {
   return Number.isFinite(n) ? n : 0;
 }
 
-export default function BudgetPanel({ days, initialTotalBudget }: BudgetPanelProps) {
+export default function BudgetPanel({ days, initialTotalBudget, planId }: BudgetPanelProps) {
   const [totalBudget, setTotalBudget] = useState<number | null>(
     typeof initialTotalBudget === "number" ? initialTotalBudget : null
   );
+  const [mode, setMode] = useState<"overview" | "expense">("overview");
+  const [amountInput, setAmountInput] = useState<string>("");
+  const [categoryInput, setCategoryInput] = useState<string>("其他");
+  const [noteInput, setNoteInput] = useState<string>("");
+  const [parseText, setParseText] = useState<string>("");
+  const [expenses, setExpenses] = useState<{ id: string; amount: number; category: string; note?: string; dateISO: string }[]>([]);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [recording, setRecording] = useState<boolean>(false);
+  const recognitionRef = useRef<any>(null);
 
   // 当父组件传入的初始总预算发生变化时，优先采用该值
   useEffect(() => {
+    // 仅根据 props 更新总预算，不再读取本地存储
     if (typeof initialTotalBudget === "number") {
       setTotalBudget(initialTotalBudget);
-      return;
+    } else {
+      setTotalBudget(null);
     }
-    try {
-      const raw = localStorage.getItem("lastPrefs");
-      if (raw) {
-        const p = JSON.parse(raw);
-        // 若未通过 props 传入，则使用本地存储中的预算
-        if (typeof p?.budgetTotal === "number") setTotalBudget(p.budgetTotal);
-      }
-    } catch {}
   }, [initialTotalBudget]);
+
+  // 读取当前计划的记账记录（数据库）
+  useEffect(() => {
+    const supabase = getSupabaseClient();
+    if (!supabase || !planId) { setExpenses([]); return; }
+    (async () => {
+      const { data: sessionData } = await supabase.auth.getSession();
+      if (!sessionData.session) { setExpenses([]); return; }
+      const { data, error } = await supabase
+        .from("expenses")
+        .select("id,amount,currency,category,note,created_at")
+        .eq("trip_plan_id", planId)
+        .order("created_at", { ascending: false });
+      if (error) {
+        setSaveError(error.message);
+        setExpenses([]);
+        return;
+      }
+      const mapped = (data || []).map((e: any) => ({ id: String(e.id), amount: Number(e.amount) || 0, category: dbCategoryToLabel(String(e.category || "misc")), note: e.note || undefined, dateISO: e.created_at || new Date().toISOString() }));
+      setExpenses(mapped);
+    })();
+  }, [planId]);
+
+  // 类别映射：中文 -> 数据库枚举
+  const labelToDbCategory = (label: string): string => {
+    switch ((label || "").trim()) {
+      case "交通": return "transport";
+      case "餐饮": return "food";
+      case "住宿": return "hotel";
+      case "门票": return "ticket";
+      case "购物": return "shopping";
+      case "活动": return "misc";
+      case "其他": return "misc";
+      default: return "misc";
+    }
+  };
+  const dbCategoryToLabel = (cat: string): string => {
+    switch ((cat || "").trim()) {
+      case "transport": return "交通";
+      case "food": return "餐饮";
+      case "hotel": return "住宿";
+      case "ticket": return "门票";
+      case "shopping": return "购物";
+      default: return "其他";
+    }
+  };
+
+  const addExpense = async (amt: number, catLabel: string, note?: string, source: "manual" | "text" = "manual") => {
+    if (!Number.isFinite(amt) || amt <= 0) { setSaveError("请输入有效金额"); return; }
+    if (!planId) { setSaveError("缺少计划 ID，无法保存"); return; }
+    const supabase = getSupabaseClient();
+    if (!supabase) { setSaveError("Supabase 未初始化"); return; }
+    const { data: sessionData } = await supabase.auth.getSession();
+    if (!sessionData.session) { setSaveError("请先登录"); return; }
+    setSaveError(null);
+    const dbCat = labelToDbCategory(catLabel || "其他");
+    const { data, error } = await supabase
+      .from("expenses")
+      .insert({ trip_plan_id: planId, amount: Math.round(amt), currency: "CNY", category: dbCat, note: note || null, source })
+      .select("id,amount,category,note,created_at")
+      .single();
+    if (error) { setSaveError(error.message); return; }
+    const item = { id: String(data.id), amount: Number(data.amount) || Math.round(amt), category: dbCategoryToLabel(String(data.category || dbCat)), note: data.note || note, dateISO: data.created_at || new Date().toISOString() };
+    setExpenses((prev) => [item, ...prev]);
+  };
 
   const { byDay, totals } = useMemo(() => {
     const byDay: { date: string; transport: number; dining: number; lodging: number; tickets: number; activities: number; total: number }[] = [];
@@ -76,6 +146,42 @@ export default function BudgetPanel({ days, initialTotalBudget }: BudgetPanelPro
   }, [days]);
 
   const maxCategory = Math.max(1, totals.grand, totals.transport, totals.dining, totals.lodging, totals.tickets, totals.activities);
+  const expenseTotals = useMemo(() => {
+    const group: Record<string, number> = {};
+    let sum = 0;
+    for (const e of expenses) { group[e.category] = (group[e.category] || 0) + e.amount; sum += e.amount; }
+    return { group, sum };
+  }, [expenses]);
+
+  const balance = typeof totalBudget === 'number' ? Math.round(totalBudget - expenseTotals.sum) : null;
+
+  const toggleVoice = () => {
+    if (recording) {
+      try { recognitionRef.current?.stop?.(); } catch {}
+      setRecording(false);
+      return;
+    }
+    try {
+      const W: any = typeof window !== 'undefined' ? window : undefined;
+      const Rec = W?.webkitSpeechRecognition || W?.SpeechRecognition;
+      if (!Rec) { setSaveError('当前浏览器不支持语音识别'); return; }
+      const rec = new Rec();
+      rec.lang = 'zh-CN';
+      rec.continuous = false;
+      rec.interimResults = false;
+      rec.onresult = (e: any) => {
+        const t = Array.from(e.results).map((r: any) => r[0].transcript).join(' ');
+        setParseText(t);
+      };
+      rec.onerror = () => { setSaveError('语音识别失败'); setRecording(false); };
+      rec.onend = () => { setRecording(false); };
+      recognitionRef.current = rec;
+      rec.start();
+      setRecording(true);
+    } catch {
+      setSaveError('语音启动失败');
+    }
+  };
 
   return (
     <div className="rounded-lg border border-zinc-200 p-3">
@@ -88,6 +194,13 @@ export default function BudgetPanel({ days, initialTotalBudget }: BudgetPanelPro
         )}
       </div>
 
+      {/* 视图切换按钮 */}
+      <div className="mt-2 flex gap-2">
+        <button onClick={() => setMode("overview")} className={["rounded border px-2 py-1 text-xs", mode==="overview"?"border-blue-500 bg-blue-50 text-blue-700":"border-zinc-300"].join(" ")}>估算</button>
+        <button onClick={() => setMode("expense")} className={["rounded border px-2 py-1 text-xs", mode==="expense"?"border-blue-500 bg-blue-50 text-blue-700":"border-zinc-300"].join(" ")}>记账</button>
+      </div>
+
+      {mode === "overview" ? (
       <div className="mt-3 grid grid-cols-1 gap-3">
         <div>
           <div className="text-xs text-zinc-600">估算总支出</div>
@@ -133,6 +246,111 @@ export default function BudgetPanel({ days, initialTotalBudget }: BudgetPanelPro
           </div>
         </div>
       </div>
+      ) : (
+      <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-4">
+        {/* 左侧：统计与记录 */}
+        <div className="space-y-4">
+          {/* 统计卡片 */}
+          <div className="grid grid-cols-3 gap-2">
+            <div className="rounded border bg-zinc-50 p-2">
+              <div className="text-[11px] text-zinc-600">总预算</div>
+              <div className="mt-1 text-sm font-semibold text-zinc-900">{typeof totalBudget === 'number' ? `¥${Math.round(totalBudget)}` : '未设置'}</div>
+            </div>
+            <div className="rounded border bg-zinc-50 p-2">
+              <div className="text-[11px] text-zinc-600">已支出</div>
+              <div className="mt-1 text-sm font-semibold text-rose-700">¥{Math.round(expenseTotals.sum)}</div>
+            </div>
+            <div className="rounded border bg-zinc-50 p-2">
+              <div className="text-[11px] text-zinc-600">余额</div>
+              <div className={["mt-1 text-sm font-semibold", (balance!==null && balance<0) ? "text-red-700" : "text-emerald-700"].join(" ")}>{balance!==null?`¥${Math.round(balance)}`:'—'}</div>
+            </div>
+          </div>
+
+          {/* 分类汇总条 */}
+          <div className="space-y-2">
+            {Object.entries(expenseTotals.group).map(([label, value]) => (
+              <div key={label} className="text-xs">
+                <div className="flex items-center justify-between">
+                  <span className="text-zinc-600">{label}</span>
+                  <span className="text-zinc-900">¥{Math.round(value)}</span>
+                </div>
+                <div className="mt-1 h-2 rounded bg-zinc-100">
+                  <div className="h-2 rounded bg-emerald-500" style={{ width: `${Math.min(100, (value / Math.max(1, expenseTotals.sum)) * 100)}%` }} />
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* 已记账列表 */}
+          <div>
+            <div className="text-xs text-zinc-600">已记账</div>
+            <div className="mt-1 space-y-1">
+              {expenses.length === 0 ? (
+                <div className="text-xs text-zinc-500">暂无记录</div>
+              ) : expenses.map((e) => (
+                <div key={e.id} className="flex items-center justify-between text-xs">
+                  <span className="text-zinc-600">{new Date(e.dateISO).toLocaleString()} · {e.category} · {e.note || '—'}</span>
+                  <span className="text-zinc-900">¥{Math.round(e.amount)}</span>
+                </div>
+              ))}
+            </div>
+            {typeof totalBudget === 'number' && expenseTotals.sum > totalBudget ? (
+              <div className="mt-2 rounded border border-red-200 bg-red-50 p-2 text-xs text-red-700">已超支：超过预算 ¥{Math.round(expenseTotals.sum - totalBudget)}</div>
+            ) : null}
+          </div>
+        </div>
+
+        {/* 右侧：输入与语音 */}
+        <div className="space-y-3">
+          {/* 语音输入 */}
+          <div className="grid grid-cols-[1fr_auto] gap-2">
+            <input className="border px-2 py-2 rounded text-sm" placeholder="语音或手动输入内容（如：餐饮 58 元）" value={parseText} onChange={(e) => setParseText(e.target.value)} />
+            <button onClick={toggleVoice} className={["px-3 py-2 rounded text-xs", recording?"bg-red-600 text-white":"bg-blue-600 text-white"].join(" ")}>{recording?"停止" : "语音输入"}</button>
+          </div>
+
+          {/* 手动金额输入 */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+            <input className="border px-2 py-2 rounded w-full" inputMode="numeric" placeholder="金额（元）" value={amountInput} onChange={(e) => setAmountInput(e.target.value)} />
+            <select className="border px-2 py-2 rounded w-full" value={categoryInput} onChange={(e) => setCategoryInput(e.target.value)}>
+              {['交通','餐饮','住宿','门票','购物','活动','其他'].map((c) => <option key={c} value={c}>{c}</option>)}
+            </select>
+            <input className="border px-2 py-2 rounded w-full" placeholder="备注（可选）" value={noteInput} onChange={(e) => setNoteInput(e.target.value)} />
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button className="bg-zinc-900 text-white px-3 py-2 rounded text-xs" onClick={async () => {
+              setSaveError(null);
+              const cleaned = amountInput.replace(/[,，\s]/g, '').replace(/[元¥￥]/g, '');
+              const n = Number(cleaned);
+              if (Number.isFinite(n) && n > 0) {
+                await addExpense(n, categoryInput, noteInput, "manual");
+                setAmountInput(''); setNoteInput('');
+                return;
+              }
+              if (parseText.trim()) {
+                // 简易本地解析：识别金额与类别关键字
+                const amtMatch = parseText.match(/([0-9]+(?:\.[0-9]+)?)\s*(?:元|块|人民币|rmb|CNY|￥|¥)?/i);
+                const amt = amtMatch ? Number(amtMatch[1]) : NaN;
+                const catMap: Record<string, string> = { '交通':'交通','餐饮':'餐饮','吃':'餐饮','饭':'餐饮','住宿':'住宿','酒店':'住宿','门票':'门票','票':'门票','购物':'购物','买':'购物','活动':'活动' };
+                let catLabel = '其他';
+                for (const k of Object.keys(catMap)) {
+                  if (parseText.includes(k)) { catLabel = catMap[k]; break; }
+                }
+                if (Number.isFinite(amt) && amt > 0) {
+                  await addExpense(amt, catLabel, noteInput || undefined, "text");
+                  setParseText('');
+                } else {
+                  setSaveError('解析失败或金额无效');
+                }
+                return;
+              }
+              setSaveError('请输入金额或提供文本');
+            }}>添加记账</button>
+            {saveError && <span className="text-xs text-red-600">{saveError}</span>}
+          </div>
+        </div>
+      </div>
+      )}
     </div>
   );
 }

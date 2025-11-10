@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { getSupabaseClient } from "@/lib/supabase";
 
 type Props = {
   title?: string;
@@ -46,10 +47,19 @@ export default function LoadingExperience({ title = "正在为你生成行程", 
     const t2 = setInterval(() => setStepIdx((i) => (i + 1) % steps.length), 3500);
     const t3 = setInterval(() => setTipIdx((i) => (i + 1) % tips.length), 4200);
     const t4 = setInterval(() => setElapsed(Math.floor((Date.now() - startTs.current) / 1000)), 1000);
-    try {
-      const raw = localStorage.getItem("lastPlan");
-      setHasLastPlan(!!raw);
-    } catch {}
+    (async () => {
+      try {
+        const supabase = getSupabaseClient();
+        if (!supabase) return;
+        const { data: session } = await supabase.auth.getSession();
+        if (!session.session) return;
+        const { data: rows } = await supabase
+          .from("trip_plans")
+          .select("id")
+          .limit(1);
+        setHasLastPlan(Array.isArray(rows) && rows.length > 0);
+      } catch {}
+    })();
     return () => { clearInterval(t1); clearInterval(t2); clearInterval(t3); clearInterval(t4); };
   }, [steps.length, tips.length]);
 

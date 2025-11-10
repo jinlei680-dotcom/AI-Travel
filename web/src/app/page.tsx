@@ -142,12 +142,6 @@ export default function HomePage() {
         throw new Error(msg || "生成失败");
       }
       const data: PlanData = await res.json();
-      try {
-        localStorage.setItem("lastPlan", JSON.stringify(data));
-        // 记录最近一次偏好（含预算），便于预算面板展示“总预算”与对比
-        const prefs = { pace: spec.preferences?.pace, ...(spec.preferences?.budgetTotal ? { budgetTotal: spec.preferences.budgetTotal } : {}) };
-        localStorage.setItem("lastPrefs", JSON.stringify(prefs));
-      } catch {}
       // 自动保存到数据库（前置已确保登录）
       try {
         const resSave = await savePlanToDatabase({
@@ -159,7 +153,18 @@ export default function HomePage() {
           budget_total: spec.preferences?.budgetTotal ?? null,
         });
         if (resSave?.tripPlanId) {
-          try { localStorage.setItem("lastTripPlanId", resSave.tripPlanId); } catch {}
+          // 写入用户最近选择的行程
+          try {
+            const supabase = getSupabaseClient();
+            if (supabase) {
+              const { data } = await supabase.auth.getSession();
+              if (data.session) {
+                await supabase
+                  .from("users")
+                  .upsert({ id: data.session.user.id, last_trip_plan_id: resSave.tripPlanId }, { onConflict: "id" });
+              }
+            }
+          } catch {}
         }
         router.push("/plan");
       } catch (e) {
@@ -189,6 +194,58 @@ export default function HomePage() {
     });
   }, []);
 
+  // 删除旅行规划（联动删除 itinerary_items -> itinerary_days -> trip_plans）
+  const handleDeletePlan = async (id: string) => {
+    if (!id) return;
+    if (!window.confirm("确认删除该旅行规划记录？该操作不可撤销。")) return;
+    const supabase = getSupabaseClient();
+    if (!supabase) { setError("Supabase 未初始化"); return; }
+    try {
+      const { data: session } = await supabase.auth.getSession();
+      if (!session.session) { setError("请先登录"); return; }
+      const { data: days, error: dayErr } = await supabase
+        .from("itinerary_days")
+        .select("id")
+        .eq("trip_plan_id", id);
+      if (dayErr) { setError(dayErr.message); return; }
+      const dayIds = (days || []).map((d: any) => d.id);
+      if (dayIds.length) {
+        const { error: delItemsErr } = await supabase
+          .from("itinerary_items")
+          .delete()
+          .in("day_id", dayIds);
+        if (delItemsErr) { setError(delItemsErr.message); return; }
+      }
+      const { error: delDaysErr } = await supabase
+        .from("itinerary_days")
+        .delete()
+        .eq("trip_plan_id", id);
+      if (delDaysErr) { setError(delDaysErr.message); return; }
+      const { error: delPlanErr } = await supabase
+        .from("trip_plans")
+        .delete()
+        .eq("id", id);
+      if (delPlanErr) { setError(delPlanErr.message); return; }
+
+      // 本地移除，同时如果删除的是最近选择则清空数据库偏好
+      setPlans((prev) => prev.filter((p) => String(p.id) !== String(id)));
+      try {
+        const supabase2 = getSupabaseClient();
+        if (supabase2) {
+          const { data } = await supabase2.auth.getSession();
+          if (data.session) {
+            await supabase2
+              .from("users")
+              .update({ last_trip_plan_id: null })
+              .eq("id", data.session.user.id);
+          }
+        }
+      } catch {}
+    } catch (e: any) {
+      setError(e?.message || "删除失败");
+    }
+  };
+
   return (
     <>
       {/* 悬浮抽屉：我的旅行规划记录（鼠标悬停显示，不改变原布局） */}
@@ -201,20 +258,41 @@ export default function HomePage() {
                 <div className="text-sm text-zinc-500">暂无记录，登录后生成行程即可出现</div>
               )}
               {plans.map((p) => (
-                <button
+                <div
                   key={p.id}
-                  onClick={() => {
-                    try { localStorage.setItem("lastTripPlanId", String(p.id)); } catch {}
-                    router.push("/plan");
-                  }}
                   className="w-full rounded border px-3 py-2 text-left text-sm border-zinc-200 hover:bg-zinc-50"
                 >
                   <div className="flex items-center justify-between">
-                    <span className="font-medium text-zinc-800">{p.destination}</span>
-                    <span className="text-xs text-zinc-500">{String(p.created_at).slice(0, 10)}</span>
+                    <button
+                      onClick={async () => {
+                        try {
+                          const supabase = getSupabaseClient();
+                          if (supabase) {
+                            const { data } = await supabase.auth.getSession();
+                            if (data.session) {
+                              await supabase
+                                .from("users")
+                                .upsert({ id: data.session.user.id, last_trip_plan_id: p.id }, { onConflict: "id" });
+                            }
+                          }
+                        } catch {}
+                        router.push("/plan");
+                      }}
+                      className="flex-1 text-left"
+                    >
+                      <div className="font-medium text-zinc-800">{p.destination}</div>
+                      <div className="mt-1 text-xs text-zinc-600">{p.start_date} → {p.end_date}</div>
+                    </button>
+                    <button
+                      onClick={() => handleDeletePlan(String(p.id))}
+                      className="ml-2 text-xs text-red-600 hover:text-red-700"
+                      aria-label="删除旅行规划"
+                    >
+                      删除
+                    </button>
                   </div>
-                  <div className="mt-1 text-xs text-zinc-600">{p.start_date} → {p.end_date}</div>
-                </button>
+                  <div className="mt-1 text-[11px] text-zinc-500">{String(p.created_at).slice(0, 10)}</div>
+                </div>
               ))}
             </div>
           </Card>
