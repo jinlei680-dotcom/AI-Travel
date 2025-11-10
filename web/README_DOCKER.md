@@ -98,3 +98,30 @@ docker run --rm --env-file ./.env -p 3000:3000 ai-travel-web:latest
 docker pull registry.cn-hangzhou.aliyuncs.com/your-namespace/ai-travel-web:latest
 docker run --rm --env-file ./.env -p 3000:3000 registry.cn-hangzhou.aliyuncs.com/your-namespace/ai-travel-web:latest
 ```
+
+## 你的 ACR 配置示例（可直接使用）
+
+你提供的 ACR 参数如下（不要将用户名密码写入代码或文档，作为 Secrets）：
+- `ACR_REGISTRY`: `crpi-bji5d4nw0bgue6rb.cn-shanghai.personal.cr.aliyuncs.com`
+- `ACR_NAMESPACE`: `travel-ai-project`
+- `ACR_REPOSITORY`: `ai-travel-web`
+
+镜像完整地址：
+`crpi-bji5d4nw0bgue6rb.cn-shanghai.personal.cr.aliyuncs.com/travel-ai-project/ai-travel-web`
+
+拉取与运行（如果仓库是私有，请先登录）：
+```bash
+# 私有仓库需登录（使用你在 ACR 控制台创建的登录令牌）
+docker login crpi-bji5d4nw0bgue6rb.cn-shanghai.personal.cr.aliyuncs.com
+
+# 拉取最新
+docker pull crpi-bji5d4nw0bgue6rb.cn-shanghai.personal.cr.aliyuncs.com/travel-ai-project/ai-travel-web:latest
+
+# 运行（通过运行时 .env 注入密钥）
+docker run --rm --env-file ./.env -p 3000:3000 \
+  crpi-bji5d4nw0bgue6rb.cn-shanghai.personal.cr.aliyuncs.com/travel-ai-project/ai-travel-web:latest
+```
+
+可见性说明：
+- 公开仓库：无需登录即可 `docker pull`
+- 私有仓库：必须先 `docker login`，再 `docker pull`
