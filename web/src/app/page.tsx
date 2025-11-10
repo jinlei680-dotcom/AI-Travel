@@ -3,6 +3,7 @@ import { useState } from "react";
 import Input from "@/components/Input";
 import VoiceButton from "@/components/VoiceButton";
 import { useRouter } from "next/navigation";
+import LoadingExperience from "@/components/LoadingExperience";
 
 type PlanItem = { id: string; time?: string; title: string; note?: string };
 type PlanDay = { date: string; items: PlanItem[] };
@@ -13,6 +14,7 @@ type PlanData = {
   end_date: string;
   days: PlanDay[];
   markers?: { position: [number, number]; title?: string }[];
+  source?: "llm" | "fallback";
 };
 
 function parseSpecFromText(text: string) {
@@ -36,7 +38,14 @@ function parseSpecFromText(text: string) {
   let pace: "relaxed" | "standard" | "intense" = "standard";
   if (/悠闲|轻松|休闲|慢/.test(t)) pace = "relaxed";
   if (/紧凑|高强度|赶场|多安排/.test(t)) pace = "intense";
-  return { destination, start_date: start, end_date: end, preferences: { pace } };
+  // 预算提取（“预算5000元”、“预算：8000”、“¥6000”等）
+  let budgetTotal: number | undefined = undefined;
+  const mb = t.match(/预算[:：\s]*([\d,.]+)/) || t.match(/¥\s*([\d,.]+)/) || t.match(/([\d,.]+)\s*元/);
+  if (mb) {
+    const num = Number(String(mb[1]).replace(/[,]/g, ""));
+    if (Number.isFinite(num) && num > 0) budgetTotal = num;
+  }
+  return { destination, start_date: start, end_date: end, preferences: { pace, ...(budgetTotal ? { budgetTotal } : {}) } };
 }
 
 export default function HomePage() {
@@ -44,6 +53,13 @@ export default function HomePage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const router = useRouter();
+  const subtitle = (() => {
+    const s = parseSpecFromText(text || "");
+    const d = s?.destination || "目的地";
+    const sd = s?.start_date || "开始日期";
+    const ed = s?.end_date || "结束日期";
+    return `${d} · ${sd} → ${ed}`;
+  })();
 
   const handleStart = async () => {
     const spec = parseSpecFromText(text);
@@ -60,7 +76,12 @@ export default function HomePage() {
         throw new Error(msg || "生成失败");
       }
       const data: PlanData = await res.json();
-      try { localStorage.setItem("lastPlan", JSON.stringify(data)); } catch {}
+      try {
+        localStorage.setItem("lastPlan", JSON.stringify(data));
+        // 记录最近一次偏好（含预算），便于预算面板展示“总预算”与对比
+        const prefs = { pace: spec.preferences?.pace, ...(spec.preferences?.budgetTotal ? { budgetTotal: spec.preferences.budgetTotal } : {}) };
+        localStorage.setItem("lastPrefs", JSON.stringify(prefs));
+      } catch {}
       router.push("/plan");
     } catch (e: any) {
       setError(e?.message || "生成失败");
@@ -71,6 +92,7 @@ export default function HomePage() {
 
   return (
     <div className="mx-auto max-w-3xl px-4 py-16">
+      {loading ? <LoadingExperience title="正在为你生成行程" subtitle={subtitle} estimatedSeconds={120} /> : null}
       <h1 className="text-2xl font-semibold">AI 旅行助手</h1>
       <p className="mt-3 text-zinc-600">一个输入框，支持语音识别；点击开始规划。</p>
 
@@ -97,7 +119,7 @@ export default function HomePage() {
           onClick={handleStart}
           disabled={loading || !text.trim()}
         >
-          {loading ? "生成中..." : "开始规划"}
+          开始规划
         </button>
       </div>
     </div>
