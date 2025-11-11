@@ -2,10 +2,9 @@
 
 面向旅行计划与地图交互的 Next.js 应用，支持 LLM 生成行程、地图兴趣点标注与路径查询、Supabase 数据存储，以及讯飞语音识别。本文档汇总主要功能、镜像使用方式、环境参数配置与常见踩坑，保证用户看完即可正确启动。
 
-重要提示：由于大模型生成回答时间较长，单次调用约需 3 分钟，请耐心等待。生成过程中页面会显示加载与进度提示。
-连接大模型有时网络会出问题，可以多试几次。
-
-输入建议：建议使用输入格式：游玩北京，两个人，轻松一点，12月1号到12月3号，预算3000元。
+**重要提示：由于大模型生成回答时间较长，单次调用约需 3 分钟，请耐心等待。生成过程中页面会显示加载与进度提示。**
+**连接大模型有时网络会出问题，可以多试几次。**
+**输入建议：建议使用输入格式：游玩北京，两个人，轻松一点，12月1号到12月3号，预算3000元。**
 
 ## 功能概览
 
@@ -24,25 +23,15 @@
   - `src/app/api/env/public/route.ts` 暴露前端可见的 `NEXT_PUBLIC_*` 变量供运行时注入。
   - `scripts/entrypoint.sh` 生产镜像入口，依据 `PORT` 启动 `next start`。
 
-## 使用镜像（推荐）
+## 使用镜像启动（亲测有效）
 
 > 维护者已通过 GitHub Actions 推送公共 ACR 镜像，用户无需登录即可拉取（若设置为公开读取）。
 
 - 拉取镜像：
   - `docker pull crpi-bji5d4nw0bgue6rb.cn-shanghai.personal.cr.aliyuncs.com/travel-ai-project/ai-travel-web:latest`
-  - 或使用发布标签（示例）：
-    - `docker pull crpi-bji5d4nw0bgue6rb.cn-shanghai.personal.cr.aliyuncs.com/travel-ai-project/ai-travel-web:release-acr-test-10`
 
-- 单容器运行（使用你的本地 `.env.local`）：
+- 单容器运行（使用你的本地 `.env.local`）：**注意替换 `/absolute/path/to/.env.local` 为你的实际路径**
   - `docker run --rm --name ai-travel-web -e PORT=8080 --env-file /absolute/path/to/.env.local -p 8080:8080 crpi-bji5d4nw0bgue6rb.cn-shanghai.personal.cr.aliyuncs.com/travel-ai-project/ai-travel-web:latest`
-  - 你的实际路径示例：
-    - `docker run --rm --name ai-travel-web -e PORT=8080 --env-file /Users/lujinlei/Documents/code/AI-Travel-Homework/AI-Travel/web/.env.local -p 8080:8080 crpi-bji5d4nw0bgue6rb.cn-shanghai.personal.cr.aliyuncs.com/travel-ai-project/ai-travel-web:latest`
-  - Apple 芯片如镜像仅 `amd64`：追加 `--platform=linux/amd64`
-
-- Compose 一键启动：
-  - `cd AI-Travel/web`
-  - `WEB_IMAGE=crpi-bji5d4nw0bgue6rb.cn-shanghai.personal.cr.aliyuncs.com/travel-ai-project/ai-travel-web:latest docker compose up -d`
-  - 默认端口 `8080`，访问 `http://localhost:8080` 或 `http://localhost:8080/plan`
 
 ## 环境参数配置
 

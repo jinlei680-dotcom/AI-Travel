@@ -3,7 +3,6 @@ import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import MapView from "@/components/MapView";
 import LoadingExperience from "@/components/LoadingExperience";
-import VoiceButton from "@/components/VoiceButton";
 import Card from "@/components/Card";
 import Badge from "@/components/Badge";
 import Button from "@/components/Button";
@@ -576,15 +575,25 @@ export default function PlanPage() {
 
   return (
     <>
-      {/* 悬浮抽屉：我的旅行规划记录（鼠标悬停显示，不改变原布局） */}
-      <div className="fixed left-0 top-32 z-40 group">
-        <div className="rounded-r bg-blue-600 text-white px-2 py-1 text-xs shadow cursor-pointer">我的记录</div>
-        <div className="hidden group-hover:block mt-1">
-          <Card title="我的旅行规划记录" className="w-72">
+      {/* 悬浮抽屉：我的旅行规划记录（左侧与首页一致样式） */}
+      <div className="fixed left-0 top-28 z-40 group">
+        <div className="rounded-r bg-blue-600 text-white px-3 py-2 text-sm shadow-md cursor-pointer hover:bg-blue-700">
+          <span className="inline-flex items-center gap-1">
+            <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2H6zm1 3h10v11H7V7zm2 2v2h6V9H9z"/></svg>
+            我的记录
+          </span>
+        </div>
+        <div className="hidden group-hover:block mt-2">
+          <Card title="我的旅行规划记录" className="w-80 shadow-lg border-blue-100">
             <div className="max-h-80 overflow-auto space-y-2">
-              {plans.length === 0 && <div className="text-sm text-zinc-500">暂无记录，请在首页生成</div>}
+              {plans.length === 0 && (
+                <div className="text-sm text-zinc-500">暂无记录，登录后生成行程即可出现</div>
+              )}
               {plans.map((p) => (
-                <div key={p.id} className={["w-full rounded border px-3 py-2 text-left text-sm", selectedPlanId === p.id ? "border-blue-500 bg-blue-50" : "border-zinc-200 hover:bg-zinc-50"].join(" ")}>
+                <div
+                  key={p.id}
+                  className={["w-full rounded border px-3 py-2 text-left text-sm", selectedPlanId === p.id ? "border-blue-500 bg-blue-50" : "border-zinc-200 hover:bg-zinc-50"].join(" ")}
+                >
                   <div className="flex items-center justify-between">
                     <button
                       onClick={async () => {
@@ -627,7 +636,7 @@ export default function PlanPage() {
             <Badge variant="gray">{plan.start_date} → {plan.end_date}</Badge>
           </div>
           {/* 已移除顶部筛选控件以保持头部简洁 */}
-          <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-2 lg:min-h-[70vh]">
+          <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-2 lg:min-h-[70vh] lg:items-stretch">
             {/* 左侧：日程导航（紧凑摘要） + 左下预算管理；侧栏记录改为悬浮抽屉 */}
             <div className="flex flex-col gap-2 h-full">
               {plan.days.map((d, di) => {
@@ -666,8 +675,8 @@ export default function PlanPage() {
               </div>
             </div>
             {/* 右侧：选中当天的详细信息（折叠集中显示） */}
-            <div className="space-y-3 h-full">
-              <Card title={`${plan.days[selectedDay]?.date || ""} 详细`}>
+            <div className="flex flex-col h-full">
+              <Card title={`${plan.days[selectedDay]?.date || ""} 详细`} className="flex-1">
                 {(() => {
                   const d = plan.days[selectedDay];
                   if (!d) return <div className="text-xs text-zinc-500">无当天数据</div>;
@@ -692,23 +701,39 @@ export default function PlanPage() {
                   const items = d.items.filter((it) => matchText(it) && matchTime(it));
                   return (
                     <div>
-                      <ul className="space-y-1">
-                        {items.map((it: any, ii) => (
-                          <li key={it.id || `${d.date}-${ii}`} className={["cursor-pointer rounded px-1 py-0.5 text-xs", highlightItemId === it.id ? "bg-blue-100 text-blue-700" : "text-zinc-700 hover:bg-zinc-100"].join(" ")}
-                              onClick={() => handleItemClick(selectedDay, ii)}>
-                            {it.time ? <span className="mr-2 text-zinc-500">{it.time}</span> : null}
-                            {it?.place?.name || it.title}
-                            {it.note ? <span className="ml-2 text-zinc-400">{it.note}</span> : null}
-                          </li>
-                        ))}
-                        {items.length === 0 && (
-                          <li className="text-[12px] text-zinc-500">该筛选下暂无活动</li>
+                      {/* 主要行程 */}
+                      <div className="rounded-lg border border-indigo-100 bg-indigo-50/60 p-3">
+                        <div className="font-medium text-indigo-800 text-[13px]">主要行程</div>
+                        {items.length > 0 ? (
+                          <ul className="mt-1 space-y-1">
+                            {items.map((it: any, ii) => (
+                              <li
+                                key={it.id || `${d.date}-${ii}`}
+                                className={[
+                                  "cursor-pointer rounded px-2 py-1 text-xs",
+                                  highlightItemId === it.id ? "bg-indigo-100 text-indigo-700" : "text-zinc-700 hover:bg-zinc-100",
+                                ].join(" ")}
+                                onClick={() => handleItemClick(selectedDay, ii)}
+                              >
+                                {it.time ? (
+                                  <span className="mr-2 inline-flex items-center rounded border border-indigo-200 bg-white/80 px-2 py-0.5 text-[11px] text-indigo-700">
+                                    {it.time}
+                                  </span>
+                                ) : null}
+                                <span className="mr-1">{it?.place?.name ? "📍" : "📝"}</span>
+                                {it?.place?.name || it.title}
+                                {it.note ? <span className="ml-2 text-zinc-400">{it.note}</span> : null}
+                              </li>
+                            ))}
+                          </ul>
+                        ) : (
+                          <div className="mt-1 text-[12px] text-indigo-700">该筛选下暂无活动</div>
                         )}
-                      </ul>
+                      </div>
                       {/* 交通信息 */}
                       {d.transport && (
-                        <div className="mt-2 rounded bg-white/60 p-2 text-[12px] text-zinc-700">
-                          <div className="font-medium text-zinc-800">交通</div>
+                        <div className="mt-2 rounded-lg border border-blue-100 bg-blue-50/60 p-3 text-[12px] text-zinc-700">
+                          <div className="font-medium text-blue-800">交通</div>
                           <div className="mt-1">方式：{String(d.transport.mode || "").trim() || "-"}</div>
                           {Array.isArray(d.transport.steps) && d.transport.steps.length ? (
                             <div className="mt-1">步骤：{d.transport.steps.join("，")}</div>
@@ -719,13 +744,13 @@ export default function PlanPage() {
                       )}
                       {/* 餐饮列表 */}
                       {Array.isArray(d.dining) && d.dining.length ? (
-                        <div className="mt-2 rounded bg-white/60 p-2 text-[12px] text-zinc-700">
-                          <div className="font-medium text-zinc-800">餐饮</div>
+                        <div className="mt-2 rounded-lg border border-orange-100 bg-orange-50/60 p-3 text-[12px] text-zinc-700">
+                          <div className="font-medium text-orange-800">餐饮</div>
                           <ul className="mt-1 space-y-1">
                             {d.dining.map((r: any, idx: number) => (
                               <li
                                 key={`${d.date}-dining-${idx}`}
-                                className="flex items-center justify-between cursor-pointer hover:bg-zinc-100 px-1 rounded"
+                                className="flex items-center justify-start cursor-pointer hover:bg-zinc-100 px-1 rounded"
                                 onClick={() => {
                                   if (r.location && typeof r.location.lat === "number" && typeof r.location.lng === "number") {
                                     handleLocatePoint(r.location.lat, r.location.lng, r.name);
@@ -735,7 +760,7 @@ export default function PlanPage() {
                                 }}
                               >
                                 <div>
-                                  <span className="text-zinc-800">{r.name}</span>
+                                  <span className="mr-1">🍽️</span><span className="text-zinc-800">{r.name}</span>
                                   {r.cuisine ? <span className="ml-2 text-zinc-500">{r.cuisine}</span> : null}
                                   {Array.isArray(r.priceRange) && r.priceRange.length === 2 ? (
                                     <span className="ml-2 text-zinc-600">￥{r.priceRange[0]}–{r.priceRange[1]}</span>
@@ -744,9 +769,6 @@ export default function PlanPage() {
                                     <span className="ml-2 text-amber-600">评分 {r.rating}</span>
                                   ) : null}
                                 </div>
-                                {r.location && typeof r.location.lat === "number" && typeof r.location.lng === "number" ? (
-                                  <button className="rounded bg-blue-500 px-2 py-0.5 text-white" onClick={(e) => { e.stopPropagation(); handleLocatePoint(r.location.lat, r.location.lng, r.name); }}>定位</button>
-                                ) : null}
                               </li>
                             ))}
                           </ul>
@@ -754,13 +776,13 @@ export default function PlanPage() {
                       ) : null}
                       {/* 住宿列表 */}
                       {Array.isArray(d.lodging) && d.lodging.length ? (
-                        <div className="mt-2 rounded bg-white/60 p-2 text-[12px] text-zinc-700">
-                          <div className="font-medium text-zinc-800">住宿</div>
+                        <div className="mt-2 rounded-lg border border-purple-100 bg-purple-50/60 p-3 text-[12px] text-zinc-700">
+                          <div className="font-medium text-purple-800">住宿</div>
                           <ul className="mt-1 space-y-1">
                             {d.lodging.map((h: any, idx: number) => (
                               <li
                                 key={`${d.date}-lodging-${idx}`}
-                                className="flex items-center justify-between cursor-pointer hover:bg-zinc-100 px-1 rounded"
+                                className="flex items-center justify-start cursor-pointer hover:bg-zinc-100 px-1 rounded"
                                 onClick={() => {
                                   if (h.location && typeof h.location.lat === "number" && typeof h.location.lng === "number") {
                                     handleLocatePoint(h.location.lat, h.location.lng, h.name);
@@ -770,7 +792,7 @@ export default function PlanPage() {
                                 }}
                               >
                                 <div>
-                                  <span className="text-zinc-800">{h.name}</span>
+                                  <span className="mr-1">🏨</span><span className="text-zinc-800">{h.name}</span>
                                   {h.area ? <span className="ml-2 text-zinc-500">{h.area}</span> : null}
                                   {typeof h.price === "number" ? <span className="ml-2 text-zinc-600">￥{h.price}</span> : null}
                                   {typeof h.rating === "number" ? <span className="ml-2 text-amber-600">评分 {h.rating}</span> : null}
@@ -778,9 +800,6 @@ export default function PlanPage() {
                                     <span className="ml-2 text-zinc-500">{h.amenities.join("、")}</span>
                                   ) : null}
                                 </div>
-                                {h.location && typeof h.location.lat === "number" && typeof h.location.lng === "number" ? (
-                                  <button className="rounded bg-blue-500 px-2 py-0.5 text-white" onClick={(e) => { e.stopPropagation(); handleLocatePoint(h.location.lat, h.location.lng, h.name); }}>定位</button>
-                                ) : null}
                               </li>
                             ))}
                           </ul>
@@ -788,8 +807,8 @@ export default function PlanPage() {
                       ) : null}
                       {/* 景点列表 */}
                       {Array.isArray(d.attractions) && d.attractions.length ? (
-                        <div className="mt-2 rounded bg-white/60 p-2 text-[12px] text-zinc-700">
-                          <div className="font-medium text-zinc-800">景点</div>
+                        <div className="mt-2 rounded-lg border border-emerald-100 bg-emerald-50/60 p-3 text-[12px] text-zinc-700">
+                          <div className="font-medium text-emerald-800">景点</div>
                           <ul className="mt-1 space-y-1">
                             {d.attractions.map((a: any, idx: number) => (
                               <li
@@ -803,7 +822,7 @@ export default function PlanPage() {
                                   }
                                 }}
                               >
-                                <span className="text-zinc-800">{a.name}</span>
+                                <span className="mr-1">📍</span><span className="text-zinc-800">{a.name}</span>
                                 {typeof a.ticket === "number" ? <span className="ml-2 text-zinc-600">门票 ￥{a.ticket}</span> : a.ticket ? <span className="ml-2 text-zinc-600">门票 {String(a.ticket)}</span> : null}
                                 {a.best_time ? <span className="ml-2 text-zinc-500">最佳时段 {a.best_time}</span> : null}
                                 {a.tips ? <span className="ml-2 text-zinc-500">{a.tips}</span> : null}
@@ -815,6 +834,7 @@ export default function PlanPage() {
                           </ul>
                         </div>
                       ) : null}
+                      <p className="mt-3 text-[11px] text-zinc-500">小提示：点击具体的地点会自动在地图中定位，支持一键导航。</p>
                     </div>
                   );
                 })()}
@@ -826,10 +846,40 @@ export default function PlanPage() {
       
       {error && <div className="text-red-600">{String((error as Error)?.message)}</div>}
       {isLoading && <div>加载中...</div>}
-      <Card title="地图与路线" actions={(
+      <Card title={(
         <div className="flex items-center gap-2">
-          <Input placeholder="起点" value={origin} onChange={(e) => setOrigin(e.target.value)} className="w-40" />
-          <Input placeholder="终点" value={destination} onChange={(e) => setDestination(e.target.value)} className="w-40" />
+          <span>地图与路线</span>
+          {(() => {
+            const distM = Number((data as any)?.distance || 0);
+            const durS = Number((data as any)?.duration || 0);
+            const formatDist = (m: number) => {
+              if (!Number.isFinite(m) || m <= 0) return null;
+              if (m < 1000) return `${Math.round(m)} 米`;
+              const km = m / 1000;
+              const decimals = km >= 10 ? 0 : 1;
+              return `${km.toFixed(decimals)} 公里`;
+            };
+            const formatDur = (s: number) => {
+              if (!Number.isFinite(s) || s <= 0) return null;
+              const mins = Math.round(s / 60);
+              if (mins < 60) return `${mins} 分钟`;
+              const h = Math.floor(mins / 60);
+              const m = mins % 60;
+              return m ? `${h} 小时 ${m} 分钟` : `${h} 小时`;
+            };
+            const dText = formatDist(distM);
+            const tText = formatDur(durS);
+            return (dText || tText) ? (
+              <span className="inline-flex items-center rounded-md px-2 py-1 text-xs font-medium ring-1 ring-inset bg-gray-100 text-gray-700 ring-gray-200">
+                {dText || "--"} · {tText || "--"}
+              </span>
+            ) : null;
+          })()}
+        </div>
+      )} actions={(
+        <div className="flex items-center gap-2">
+          <Input placeholder="起点" value={origin} onChange={(e) => setOrigin(e.target.value)} className="w-52" />
+          <Input placeholder="终点" value={destination} onChange={(e) => setDestination(e.target.value)} className="w-52" />
           <div className="hidden sm:flex items-center rounded-md border border-gray-200 bg-white shadow-sm">
             {(["driving","walking","transit"] as const).map((v) => (
               <button
@@ -840,9 +890,9 @@ export default function PlanPage() {
               >{v==="driving"?"驾车":v==="walking"?"步行":"公交地铁"}</button>
             ))}
           </div>
-          <Button onClick={handleQueryRoute} size="sm">查询路线</Button>
+          <Button onClick={handleQueryRoute} size="sm">导航</Button>
           <Button onClick={handleSwapEnds} size="sm">切换起终点</Button>
-          <VoiceButton onTranscribe={handleTranscribe} />
+          {/* 语音输入已移除 */}
           {routeHint && <div className="text-xs text-red-600">{routeHint}</div>}
         </div>
       )}>

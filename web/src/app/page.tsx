@@ -248,9 +248,9 @@ export default function HomePage() {
 
   return (
     <>
-      {/* 悬浮抽屉：我的旅行规划记录（右侧更美观） */}
-      <div className="fixed right-0 top-28 z-40 group">
-        <div className="rounded-l bg-blue-600 text-white px-3 py-2 text-sm shadow-md cursor-pointer hover:bg-blue-700">
+      {/* 悬浮抽屉：我的旅行规划记录（左侧统一样式） */}
+      <div className="fixed left-0 top-28 z-40 group">
+        <div className="rounded-r bg-blue-600 text-white px-3 py-2 text-sm shadow-md cursor-pointer hover:bg-blue-700">
           <span className="inline-flex items-center gap-1">
             <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2H6zm1 3h10v11H7V7zm2 2v2h6V9H9z"/></svg>
             我的记录
