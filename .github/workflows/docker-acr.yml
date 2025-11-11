@@ -66,6 +66,33 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
 
+      - name: Export image as tar (for direct download)
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          set -e
+          echo "Selecting primary tag from metadata..."
+          PRIMARY_TAG=$(echo "${{ steps.meta.outputs.tags }}" | head -n1)
+          echo "Primary tag: ${PRIMARY_TAG}"
+          if [ -z "$PRIMARY_TAG" ]; then
+            echo "No tag found from metadata; skip export"
+            exit 0
+          fi
+          echo "Pulling image $PRIMARY_TAG"
+          docker pull "$PRIMARY_TAG"
+          TAR_NAME="ai-travel-web-image.tar"
+          echo "Saving image to $TAR_NAME"
+          docker save -o "$TAR_NAME" "$PRIMARY_TAG"
+          echo "Saved image tar: $TAR_NAME"
+
+      - name: Upload image tar artifact
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-travel-web-image
+          path: ai-travel-web-image.tar
+          if-no-files-found: warn
+
       - name: Diagnostic - plain docker build without push (show logs)
         if: ${{ always() }}
         shell: bash

@@ -1,6 +1,7 @@
 "use client";
 import React, { useEffect, useMemo, useState, useRef } from "react";
 import { getSupabaseClient } from "@/lib/supabase";
+import { parseAmountFromText, detectCategory } from "../lib/amount";
 
 type PriceRange = [number, number];
 type DiningItem = { name: string; priceRange?: PriceRange };
@@ -328,16 +329,10 @@ export default function BudgetPanel({ days, initialTotalBudget, planId }: Budget
                 return;
               }
               if (parseText.trim()) {
-                // 简易本地解析：识别金额与类别关键字
-                const amtMatch = parseText.match(/([0-9]+(?:\.[0-9]+)?)\s*(?:元|块|人民币|rmb|CNY|￥|¥)?/i);
-                const amt = amtMatch ? Number(amtMatch[1]) : NaN;
-                const catMap: Record<string, string> = { '交通':'交通','餐饮':'餐饮','吃':'餐饮','饭':'餐饮','住宿':'住宿','酒店':'住宿','门票':'门票','票':'门票','购物':'购物','买':'购物','活动':'活动' };
-                let catLabel = '其他';
-                for (const k of Object.keys(catMap)) {
-                  if (parseText.includes(k)) { catLabel = catMap[k]; break; }
-                }
-                if (Number.isFinite(amt) && amt > 0) {
-                  await addExpense(amt, catLabel, noteInput || undefined, "text");
+                const amt = parseAmountFromText(parseText);
+                const catLabel = detectCategory(parseText);
+                if (amt && amt > 0) {
+                  await addExpense(Math.round(amt), catLabel, noteInput || undefined, "text");
                   setParseText('');
                 } else {
                   setSaveError('解析失败或金额无效');
