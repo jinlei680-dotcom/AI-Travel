@@ -299,8 +299,8 @@ export default function HomePage() {
         </div>
       </div>
 
-      {/* 原首页内容 */}
-      <div className="mx-auto max-w-3xl px-4 py-16">
+      {/* 原首页内容：居中展示输入对话框 */}
+      <div className="mx-auto max-w-3xl px-4 min-h-screen flex flex-col items-center justify-center text-center">
       {loading ? <LoadingExperience title="正在为你生成行程" subtitle={subtitle} estimatedSeconds={120} /> : null}
       <h1 className="text-2xl font-semibold">AI 旅行助手</h1>
       <p className="mt-3 text-zinc-600">一个输入框，支持语音识别；点击开始规划。</p>
@@ -310,7 +310,7 @@ export default function HomePage() {
       )}
 
       {/* 单输入框：语音按钮内嵌到输入框右侧 */}
-      <div className="mt-6 relative">
+      <div className="mt-6 relative w-full">
         <Input
           placeholder="例如：下周在杭州安排一个轻松的三天行程"
           value={text}
