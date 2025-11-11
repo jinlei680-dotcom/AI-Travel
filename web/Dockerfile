@@ -2,11 +2,12 @@
 FROM node:18-bullseye-slim AS deps
 WORKDIR /app
 COPY package.json package-lock.json ./
-RUN npm ci --legacy-peer-deps
+RUN npm ci --legacy-peer-deps --no-audit --no-fund
 
 FROM node:18-bullseye-slim AS builder
 WORKDIR /app
 ENV NEXT_TELEMETRY_DISABLED=1
+ENV NODE_OPTIONS=--max_old_space_size=2048
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 RUN npm run build
