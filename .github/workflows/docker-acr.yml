@@ -66,8 +66,8 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
 
-      - name: Export image as tar (for direct download)
-        if: ${{ always() }}
+      - name: Export image as tar (if push succeeded)
+        if: ${{ success() }}
         shell: bash
         run: |
           set -e
@@ -79,14 +79,14 @@ jobs:
             exit 0
           fi
           echo "Pulling image $PRIMARY_TAG"
-          docker pull "$PRIMARY_TAG"
+          docker pull "$PRIMARY_TAG" || { echo "Image not found in registry; skip export"; exit 0; }
           TAR_NAME="ai-travel-web-image.tar"
           echo "Saving image to $TAR_NAME"
           docker save -o "$TAR_NAME" "$PRIMARY_TAG"
           echo "Saved image tar: $TAR_NAME"
 
-      - name: Upload image tar artifact
-        if: ${{ always() }}
+      - name: Upload image tar artifact (from registry)
+        if: ${{ success() }}
         uses: actions/upload-artifact@v4
         with:
           name: ai-travel-web-image
@@ -94,10 +94,36 @@ jobs:
           if-no-files-found: warn
 
       - name: Diagnostic - plain docker build without push (show logs)
-        if: ${{ always() }}
+        if: ${{ failure() }}
         shell: bash
         run: |
           export DOCKER_CLI_HINTS=false
           export BUILDKIT_PROGRESS=plain
           echo "Running diagnostic docker build to show detailed Next.js logs..."
-          docker build --pull --no-cache --progress=plain -t local-test -f ./web/Dockerfile ./web || true
+          docker build --pull --no-cache --progress=plain -t local-test -f ./web/Dockerfile ./web | tee diagnostic-build.log || true
+
+      - name: Upload diagnostic build logs
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: diagnostic-build-logs
+          path: diagnostic-build.log
+          if-no-files-found: warn
+
+      - name: Fallback - export locally built image as tar
+        if: ${{ failure() }}
+        shell: bash
+        run: |
+          set -e
+          echo "Attempting to save locally built image 'local-test' to tar..."
+          docker image inspect local-test >/dev/null 2>&1 || { echo "Local image 'local-test' not found, skip"; exit 0; }
+          docker save -o ai-travel-web-image.tar local-test
+          echo "Saved fallback tar ai-travel-web-image.tar"
+
+      - name: Upload fallback image tar artifact
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-travel-web-image
+          path: ai-travel-web-image.tar
+          if-no-files-found: warn
