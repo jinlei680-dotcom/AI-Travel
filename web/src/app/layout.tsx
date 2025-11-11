@@ -2,9 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 import NavBar from "@/components/NavBar";
 import Providers from "@/components/Providers";
-import dynamic from "next/dynamic";
 // 运行时注入公开环境与高德脚本，避免构建期 NEXT_PUBLIC_* 为空导致功能不可用
-const EnvScriptsLoader = dynamic(() => import("@/components/EnvScriptsLoader"), { ssr: false });
+import EnvScriptsLoader from "@/components/EnvScriptsLoader";
 
 export const metadata: Metadata = {
   title: "Create Next App",

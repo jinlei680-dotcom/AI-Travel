@@ -36,7 +36,7 @@
 
 ## 维护者发布镜像（GitHub Actions 自动化）
 
-- 工作流：`AI-Travel/.github/workflows/docker-acr.yml`
+- 工作流：`.github/workflows/docker-acr.yml`
 - 需在 GitHub 仓库 Secrets 配置：
   - `ACR_REGISTRY`（例如 `crpi-bji5d4nw0bgue6rb.cn-shanghai.personal.cr.aliyuncs.com`）
   - `ACR_NAMESPACE`（例如 `travel-ai-project`）
