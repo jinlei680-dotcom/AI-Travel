@@ -1,0 +1,23 @@
+version: "3.9"
+
+services:
+  ai-travel-web:
+    image: ${WEB_IMAGE:-crpi-bji5d4nw0bgue6rb.cn-shanghai.personal.cr.aliyuncs.com/travel-ai-project/ai-travel-web:latest}
+    platform: ${PLATFORM:-linux/amd64}
+    env_file:
+      - ./.env
+      - ./.env.local
+    environment:
+      - PORT=${PORT:-8080}
+    ports:
+      - "${PORT:-8080}:${PORT:-8080}"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:${PORT:-8080}/ || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+networks:
+  default:
+    name: ai-travel-net

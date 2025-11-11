@@ -2,7 +2,9 @@ import type { Metadata } from "next";
 import "./globals.css";
 import NavBar from "@/components/NavBar";
 import Providers from "@/components/Providers";
-import Script from "next/script";
+import dynamic from "next/dynamic";
+// 运行时注入公开环境与高德脚本，避免构建期 NEXT_PUBLIC_* 为空导致功能不可用
+const EnvScriptsLoader = dynamic(() => import("@/components/EnvScriptsLoader"), { ssr: false });
 
 export const metadata: Metadata = {
   title: "Create Next App",
@@ -14,23 +16,12 @@ export default function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  const amapKey = process.env.NEXT_PUBLIC_AMAP_KEY;
-  const amapSecurityJsCode = process.env.NEXT_PUBLIC_AMAP_SECURITY_JS_CODE;
   return (
     <html lang="en">
       <body className={"antialiased"}>
         <NavBar />
-        {amapSecurityJsCode && (
-          <Script id="amap-security" strategy="beforeInteractive">
-            {`window._AMapSecurityConfig = { securityJsCode: '${amapSecurityJsCode}' };`}
-          </Script>
-        )}
-        {amapKey && (
-          <Script
-            src={`https://webapi.amap.com/maps?v=2.0&key=${amapKey}`}
-            strategy="beforeInteractive"
-          />
-        )}
+        {/* 在客户端运行时加载公开环境与高德脚本 */}
+        <EnvScriptsLoader />
         <Providers>
           {children}
         </Providers>
