@@ -56,6 +56,25 @@ jobs:
             type=ref,event=tag
             type=sha
 
+      # 预检：无推送的本地构建，始终捕获完整日志并上传为工件，便于定位问题
+      - name: Preflight - plain docker build (capture full logs)
+        if: ${{ always() }}
+        shell: bash
+        continue-on-error: true
+        run: |
+          export DOCKER_CLI_HINTS=false
+          export BUILDKIT_PROGRESS=plain
+          echo "Running preflight docker build to capture full logs..."
+          docker build --pull --no-cache --progress=plain -t precheck -f ./web/Dockerfile ./web 2>&1 | tee preflight-build.log
+
+      - name: Upload preflight build logs
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: preflight-build-logs
+          path: preflight-build.log
+          if-no-files-found: warn
+
       - name: Build and push
         uses: docker/build-push-action@v5
         with:
@@ -93,31 +112,14 @@ jobs:
           path: ai-travel-web-image.tar
           if-no-files-found: warn
 
-      - name: Diagnostic - plain docker build without push (show logs)
-        if: ${{ failure() }}
-        shell: bash
-        run: |
-          export DOCKER_CLI_HINTS=false
-          export BUILDKIT_PROGRESS=plain
-          echo "Running diagnostic docker build to show detailed Next.js logs..."
-          docker build --pull --no-cache --progress=plain -t local-test -f ./web/Dockerfile ./web | tee diagnostic-build.log || true
-
-      - name: Upload diagnostic build logs
-        if: ${{ failure() }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: diagnostic-build-logs
-          path: diagnostic-build.log
-          if-no-files-found: warn
-
-      - name: Fallback - export locally built image as tar
+      - name: Fallback - export precheck image as tar
         if: ${{ failure() }}
         shell: bash
         run: |
           set -e
-          echo "Attempting to save locally built image 'local-test' to tar..."
-          docker image inspect local-test >/dev/null 2>&1 || { echo "Local image 'local-test' not found, skip"; exit 0; }
-          docker save -o ai-travel-web-image.tar local-test
+          echo "Attempting to save locally built image 'precheck' to tar..."
+          docker image inspect precheck >/dev/null 2>&1 || { echo "Local image 'precheck' not found, skip"; exit 0; }
+          docker save -o ai-travel-web-image.tar precheck
           echo "Saved fallback tar ai-travel-web-image.tar"
 
       - name: Upload fallback image tar artifact
