@@ -2,6 +2,8 @@
 
 面向旅行计划与地图交互的 Next.js 应用，支持 LLM 生成行程、地图兴趣点标注与路径查询、Supabase 数据存储，以及讯飞语音识别。本文档汇总主要功能、镜像使用方式、环境参数配置与常见踩坑，保证用户看完即可正确启动。
 
+重要提示：由于大模型生成回答时间较长，单次调用约需 3 分钟，请耐心等待。生成过程中页面会显示加载与进度提示。
+
 ## 功能概览
 
 - 计划生成：在 `/api/plan/create` 由后端调用通义千问（OpenAI 兼容）生成含天数、活动与地图标注的行程。
@@ -74,11 +76,7 @@
 
 ## 访问与验证
 
-- 打开 UI：`http://localhost:8080/plan`（或你设置的端口）。
-- 健康检查：`curl -s http://localhost:8080/api/health/supabase` 应返回 `ok: true`。
-- 公共环境：`curl -s http://localhost:8080/api/env/public` 应看到 `NEXT_PUBLIC_*` 非空。
-- 讯飞签名（调试）：`curl -s "http://localhost:8080/api/voice/iflytek/sign?debug=1"` 应返回 `enabled: true` 与 `wsUrl`。
-- 地图脚本注入：浏览器 Network 面板应加载 `https://webapi.amap.com/maps?v=2.0&key=...`，Console 无错误。
+- 打开 UI：`http://localhost:8080/
 
 ## 常见踩坑与解决方案
 
