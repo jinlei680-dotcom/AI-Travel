@@ -1,67 +1,107 @@
 # AI-Travel Web
 
-快速指南，帮助公众用户直接拉取并运行公共 ACR 镜像，以及维护者发布新镜像的流程。
+面向旅行计划与地图交互的 Next.js 应用，支持 LLM 生成行程、地图兴趣点标注与路径查询、Supabase 数据存储，以及讯飞语音识别。本文档汇总主要功能、镜像使用方式、环境参数配置与常见踩坑，保证用户看完即可正确启动。
 
-## Quick Start（公共 ACR 镜像）
+## 功能概览
+
+- 计划生成：在 `/api/plan/create` 由后端调用通义千问（OpenAI 兼容）生成含天数、活动与地图标注的行程。
+- 地图与 POI：前端集成高德 JSAPI 加载地图（动态脚本注入），后端通过高德 WebService 代理搜索。
+- 路线与交互：页面 `/plan` 提供兴趣点定位、起终点选择与路线提示的交互体验。
+- 语音识别：集成科大讯飞 IAT，后端生成 WebSocket 授权签名，前端可进行语音输入（可选）。
+- 数据存储：Supabase 读写示例与健康检查接口（当前 UI 以演示为主，表结构简化）。
+
+## 项目架构
+
+- 技术栈：Next.js App Router、TypeScript、Supabase、Amap JSAPI/WebService。
+- 关键模块：
+  - `src/components/EnvScriptsLoader.tsx` 在客户端运行时注入公共环境与高德脚本。
+  - `src/lib/supabase.ts` 允许运行时覆盖 Supabase URL/AnonKey，防止构建期空值。
+  - `src/app/api/env/public/route.ts` 暴露前端可见的 `NEXT_PUBLIC_*` 变量供运行时注入。
+  - `scripts/entrypoint.sh` 生产镜像入口，依据 `PORT` 启动 `next start`。
+
+## 使用镜像（推荐）
+
+> 维护者已通过 GitHub Actions 推送公共 ACR 镜像，用户无需登录即可拉取（若设置为公开读取）。
 
 - 拉取镜像：
   - `docker pull crpi-bji5d4nw0bgue6rb.cn-shanghai.personal.cr.aliyuncs.com/travel-ai-project/ai-travel-web:latest`
-  - 或固定到发布标签：
-    - `docker pull crpi-bji5d4nw0bgue6rb.cn-shanghai.personal.cr.aliyuncs.com/travel-ai-project/ai-travel-web:release-acr-test-7`
+  - 或使用发布标签（示例）：
+    - `docker pull crpi-bji5d4nw0bgue6rb.cn-shanghai.personal.cr.aliyuncs.com/travel-ai-project/ai-travel-web:release-acr-test-10`
 
-- 单容器运行：
-  - `docker run --rm --name ai-travel-web -e PORT=8080 --env-file ./\.env.local -p 8080:8080 crpi-bji5d4nw0bgue6rb.cn-shanghai.personal.cr.aliyuncs.com/travel-ai-project/ai-travel-web:latest`
-  - Apple 芯片如镜像只有 `amd64`：加 `--platform=linux/amd64`
+- 单容器运行（使用你的本地 `.env.local`）：
+  - `docker run --rm --name ai-travel-web -e PORT=8080 --env-file /absolute/path/to/.env.local -p 8080:8080 crpi-bji5d4nw0bgue6rb.cn-shanghai.personal.cr.aliyuncs.com/travel-ai-project/ai-travel-web:latest`
+  - 你的实际路径示例：
+    - `docker run --rm --name ai-travel-web -e PORT=8080 --env-file /Users/lujinlei/Documents/code/AI-Travel-Homework/AI-Travel/web/.env.local -p 8080:8080 crpi-bji5d4nw0bgue6rb.cn-shanghai.personal.cr.aliyuncs.com/travel-ai-project/ai-travel-web:latest`
+  - Apple 芯片如镜像仅 `amd64`：追加 `--platform=linux/amd64`
 
 - Compose 一键启动：
   - `cd AI-Travel/web`
   - `WEB_IMAGE=crpi-bji5d4nw0bgue6rb.cn-shanghai.personal.cr.aliyuncs.com/travel-ai-project/ai-travel-web:latest docker compose up -d`
+  - 默认端口 `8080`，访问 `http://localhost:8080` 或 `http://localhost:8080/plan`
 
-- 访问与验证：
-  - 打开 `http://localhost:8080` 或 `http://localhost:8080/plan`
-  - 健康检查：`http://localhost:8080/api/health/supabase`
+## 环境参数配置
 
-## 必要环境变量
-
-- 前端可见（已在镜像构建阶段注入，无需用户再传）：
+- 前端可见（构建期已注入，同时运行时再注入强化稳定性）：
   - `NEXT_PUBLIC_SUPABASE_URL`
   - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
-- 运行时服务端变量（用户本机 `.env.local` 提供）：
+  - `NEXT_PUBLIC_AMAP_KEY`
+  - `NEXT_PUBLIC_AMAP_SECURITY_JS_CODE`（如控制台开启安全策略）
+
+- 服务端运行时（不要加 `NEXT_PUBLIC_` 前缀）：
   - LLM（通义千问 OpenAI 兼容）：`LLM_PROVIDER=openai-compatible`、`DOUBAO_API_KEY`、`DOUBAO_MODEL`、`DOUBAO_API_BASE`
-  - 语音（科大讯飞，可选）：`IFLYTEK_APP_ID`、`IFLYTEK_API_KEY`、`IFLYTEK_API_SECRET`
+  - 语音（科大讯飞，可选）：`IFLYTEK_APP_ID`、`IFLYTEK_API_KEY`、`IFLYTEK_API_SECRET`、`IFLYTEK_IAT_HOST`（默认 `ws-api.xfyun.cn`）
   - 地图 WebService（可选）：`AMAP_WEBSERVICE_KEY`
-  - 端口：`PORT=8080`（如改端口，对应映射即可）
+  - 端口：`PORT`（单容器建议用 `8080`，Compose 默认 `8080`）
 
-> 提醒：敏感密钥仅作为服务端变量在运行时注入，不要带 `NEXT_PUBLIC_` 前缀。
+- 示例 `.env.local`（请按你的密钥填充）：
+  - `NEXT_PUBLIC_SUPABASE_URL=https://<your-supabase>.supabase.co`
+  - `NEXT_PUBLIC_SUPABASE_ANON_KEY=<your-anon-key>`
+  - `NEXT_PUBLIC_AMAP_KEY=<your-amap-browser-key>`
+  - `NEXT_PUBLIC_AMAP_SECURITY_JS_CODE=<your-amap-security-code>`
+  - `LLM_PROVIDER=openai-compatible`
+  - `DOUBAO_API_KEY=<your-dashscope-key>`
+  - `DOUBAO_MODEL=qwen3-max`
+  - `DOUBAO_API_BASE=https://dashscope.aliyuncs.com/compatible-mode/v1`
+  - `IFLYTEK_APP_ID=<your-app-id>`
+  - `IFLYTEK_API_KEY=<your-api-key>`
+  - `IFLYTEK_API_SECRET=<your-api-secret>`
+  - `AMAP_WEBSERVICE_KEY=<your-webservice-key>`
+  - `PORT=8080`
 
-## 维护者发布镜像（GitHub Actions 自动化）
+> 说明：
+> - `.env.local` 不会被打包进镜像，也不会提交到仓库（已在 `.dockerignore` 与 `.gitignore` 中忽略）。
+> - 单容器运行需用 `--env-file` 指向你的文件；Compose 会自动读取 `.env` 与 `.env.local`。
+
+## 访问与验证
+
+- 打开 UI：`http://localhost:8080/plan`（或你设置的端口）。
+- 健康检查：`curl -s http://localhost:8080/api/health/supabase` 应返回 `ok: true`。
+- 公共环境：`curl -s http://localhost:8080/api/env/public` 应看到 `NEXT_PUBLIC_*` 非空。
+- 讯飞签名（调试）：`curl -s "http://localhost:8080/api/voice/iflytek/sign?debug=1"` 应返回 `enabled: true` 与 `wsUrl`。
+- 地图脚本注入：浏览器 Network 面板应加载 `https://webapi.amap.com/maps?v=2.0&key=...`，Console 无错误。
+
+## 常见踩坑与解决方案
+
+- 构建上下文路径错误：工作流最初使用 `AI-Travel/web` 导致 buildx 报 `path not found`，已改为 `./web` 并显式 `Dockerfile: ./web/Dockerfile`。
+- Server Component 动态导入：`next/dynamic` 在 Server Component 中使用会报错，已改为直接在客户端组件中注入脚本（`EnvScriptsLoader`）。
+- 环境变量构建期内联不足：客户端在构建期可能拿不到 `NEXT_PUBLIC_*`，通过 `/api/env/public` + `EnvScriptsLoader` 在运行时注入，保证稳定。
+- 端口冲突：开发环境占用 `3000`，建议镜像运行使用 `PORT=8080` 并映射 `-p 8080:8080`。
+- AMap 安全策略：如开启安全校验，必须设置 `NEXT_PUBLIC_AMAP_SECURITY_JS_CODE`，并在控制台添加域名白名单（含 `localhost`）。
+- 架构不匹配：Apple 芯片运行仅 `amd64` 镜像需加 `--platform=linux/amd64`。
+- 镜像安全：避免把密钥打包进镜像；仅在运行时通过 `--env-file` 注入。
+
+## 维护者发布流程（CI 自动化）
 
 - 工作流：`.github/workflows/docker-acr.yml`
-- 需在 GitHub 仓库 Secrets 配置：
-  - `ACR_REGISTRY`（例如 `crpi-bji5d4nw0bgue6rb.cn-shanghai.personal.cr.aliyuncs.com`）
-  - `ACR_NAMESPACE`（例如 `travel-ai-project`）
-  - `ACR_REPOSITORY`（例如 `ai-travel-web`）
-  - `ACR_USERNAME`、`ACR_PASSWORD`
-  - `NEXT_PUBLIC_SUPABASE_URL`、`NEXT_PUBLIC_SUPABASE_ANON_KEY`
-  - 可选：`NEXT_PUBLIC_AMAP_KEY`、`NEXT_PUBLIC_AMAP_SECURITY_JS_CODE`
-
-- 触发发布：
-  - 推送到 `main`：`git push origin main`
-  - 推送标签（推荐）：
-    - `git tag -a release-acr-test-7 -m "Public ACR build"`
-    - `git push origin release-acr-test-7`
-  - 或在 GitHub Actions 页面手动运行（workflow_dispatch）
-
-- 工作流会：
-  - 使用 buildx 构建多架构镜像（`linux/amd64, linux/arm64`）
-  - 在构建时注入前端可见的 `NEXT_PUBLIC_*` 变量
-  - 推送到你的公共 ACR，标签包含 `latest`、短 `sha` 或发布标签
+- Secrets：`ACR_REGISTRY`、`ACR_NAMESPACE`、`ACR_REPOSITORY`、`ACR_USERNAME`、`ACR_PASSWORD`，以及 `NEXT_PUBLIC_*`（构建期注入）。
+- 触发：推 `main` 或推标签（如 `release-acr-test-10`）。
+- 产物：`$ACR_REGISTRY/$ACR_NAMESPACE/$ACR_REPOSITORY:latest`、短 `sha`、发布标签。用户按上文命令拉取运行。
 
 ## Apple 芯片注意事项
 
-- 若镜像为多架构：可直接运行；若仅 `amd64`：拉取或运行时使用 `--platform=linux/amd64`。
+- 镜像为多架构时可直接运行；若仅 `amd64`，请使用 `--platform=linux/amd64`。
 
 ## 安全实践
 
-- 不要将任何敏感密钥打包进镜像或提交到仓库。
-- 前端可见变量必须以 `NEXT_PUBLIC_` 开头；所有敏感 Key 保持为服务端变量。
+- 敏感密钥仅作为服务端运行时变量；前端可见变量使用 `NEXT_PUBLIC_` 前缀。
+- 不要在仓库或公共文档泄露任何账号凭证或 API Key。
