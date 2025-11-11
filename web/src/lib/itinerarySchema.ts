@@ -9,7 +9,7 @@ export const PlanSpecInputSchema = z.object({
   endDate: z.string().optional(),
   preferences: z
     .object({
-      pace: z.enum(["relaxed", "standard", "tight"]).optional(),
+      pace: z.enum(["relaxed", "standard"]).optional(),
       interests: z.array(z.string()).optional(),
       budgetTotal: z.number().optional(),
       partySize: z.number().int().positive().optional(),
@@ -59,7 +59,7 @@ export function normalizeSpec(spec: PlanSpecInput) {
     destination: string;
     start_date: string;
     end_date: string;
-    preferences?: { pace?: "relaxed" | "standard" | "tight"; interests?: string[]; budgetTotal?: number; partySize?: number };
+    preferences?: { pace?: "relaxed" | "standard"; interests?: string[]; budgetTotal?: number; partySize?: number };
   };
 }
 
@@ -84,7 +84,6 @@ export function daysBetweenInclusive(start: Date, end: Date) {
 export function defaultSlots(pace: string | undefined) {
   const p = pace || "standard";
   if (p === "relaxed") return ["上午", "下午"];
-  if (p === "tight") return ["早间", "上午", "下午", "傍晚", "夜间"];
   return ["上午", "下午", "夜间"];
 }
 

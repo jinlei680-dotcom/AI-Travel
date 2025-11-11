@@ -891,8 +891,8 @@ export default function PlanPage() {
               <div className="col-span-1 sm:col-span-2">
                 <div className="text-xs text-zinc-600 mb-1">行程节奏</div>
                 <div className="flex gap-2">
-            {(["relaxed","standard","tight"] as const).map((p) => (
-              <button key={p} onClick={() => setPace(p)} className={["rounded border px-2 py-1 text-xs", pace===p?"border-blue-500 bg-blue-50 text-blue-700":"border-zinc-300"].join(" ")}>{p==="relaxed"?"悠闲":p==="standard"?"标准":"紧凑"}</button>
+            {(["relaxed","standard"] as const).map((p) => (
+              <button key={p} onClick={() => setPace(p)} className={["rounded border px-2 py-1 text-xs", pace===p?"border-blue-500 bg-blue-50 text-blue-700":"border-zinc-300"].join(" ")}>{p==="relaxed"?"悠闲":"标准"}</button>
             ))}
                 </div>
               </div>

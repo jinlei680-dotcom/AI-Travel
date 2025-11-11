@@ -85,9 +85,9 @@ function parseSpecFromText(text: string) {
     }
   }
 
-  let pace: "relaxed" | "standard" | "tight" = "standard";
+  let pace: "relaxed" | "standard" = "standard";
   if (/悠闲|轻松|休闲|慢/.test(t)) pace = "relaxed";
-  if (/紧凑|高强度|赶场|多安排/.test(t)) pace = "tight";
+  // 若用户输入“紧凑/高强度”等字样，仍按标准节奏处理
   // 预算提取（“预算5000元”、“预算：8000”、“¥6000”等）
   let budgetTotal: number | undefined = undefined;
   const mb = t.match(/预算[:：\s]*([\d,.]+)/) || t.match(/¥\s*([\d,.]+)/) || t.match(/([\d,.]+)\s*元/);
