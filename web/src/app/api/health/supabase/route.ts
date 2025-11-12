@@ -20,3 +20,4 @@ export async function GET() {
     return NextResponse.json({ ok: false, error: e?.message || "Unknown error" }, { status: 500 });
   }
 }
+

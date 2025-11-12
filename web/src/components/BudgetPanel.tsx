@@ -1,7 +1,8 @@
 "use client";
-import React, { useEffect, useMemo, useState, useRef } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { getSupabaseClient } from "@/lib/supabase";
 import { parseAmountFromText, detectCategory } from "../lib/amount";
+import VoiceButton from "@/components/VoiceButton";
 
 type PriceRange = [number, number];
 type DiningItem = { name: string; priceRange?: PriceRange };
@@ -41,18 +42,20 @@ function ticketToNumber(t?: number | string): number {
 }
 
 export default function BudgetPanel({ days, initialTotalBudget, planId }: BudgetPanelProps) {
+  useEffect(() => {
+    console.log("[BudgetPanel] mounted");
+    return () => console.log("[BudgetPanel] unmounted");
+  }, []);
   const [totalBudget, setTotalBudget] = useState<number | null>(
     typeof initialTotalBudget === "number" ? initialTotalBudget : null
   );
-  const [mode, setMode] = useState<"overview" | "expense">("overview");
+  const [mode, setMode] = useState<"overview" | "expense">("expense");
   const [amountInput, setAmountInput] = useState<string>("");
   const [categoryInput, setCategoryInput] = useState<string>("其他");
   const [noteInput, setNoteInput] = useState<string>("");
   const [parseText, setParseText] = useState<string>("");
   const [expenses, setExpenses] = useState<{ id: string; amount: number; category: string; note?: string; dateISO: string }[]>([]);
   const [saveError, setSaveError] = useState<string | null>(null);
-  const [recording, setRecording] = useState<boolean>(false);
-  const recognitionRef = useRef<any>(null);
 
   // 当父组件传入的初始总预算发生变化时，优先采用该值
   useEffect(() => {
@@ -156,33 +159,7 @@ export default function BudgetPanel({ days, initialTotalBudget, planId }: Budget
 
   const balance = typeof totalBudget === 'number' ? Math.round(totalBudget - expenseTotals.sum) : null;
 
-  const toggleVoice = () => {
-    if (recording) {
-      try { recognitionRef.current?.stop?.(); } catch {}
-      setRecording(false);
-      return;
-    }
-    try {
-      const W: any = typeof window !== 'undefined' ? window : undefined;
-      const Rec = W?.webkitSpeechRecognition || W?.SpeechRecognition;
-      if (!Rec) { setSaveError('当前浏览器不支持语音识别'); return; }
-      const rec = new Rec();
-      rec.lang = 'zh-CN';
-      rec.continuous = false;
-      rec.interimResults = false;
-      rec.onresult = (e: any) => {
-        const t = Array.from(e.results).map((r: any) => r[0].transcript).join(' ');
-        setParseText(t);
-      };
-      rec.onerror = () => { setSaveError('语音识别失败'); setRecording(false); };
-      rec.onend = () => { setRecording(false); };
-      recognitionRef.current = rec;
-      rec.start();
-      setRecording(true);
-    } catch {
-      setSaveError('语音启动失败');
-    }
-  };
+  // 使用 VoiceButton 进行语音识别，实时写入 parseText
 
   return (
     <div className="rounded-lg border border-zinc-200 p-3">
@@ -248,68 +225,21 @@ export default function BudgetPanel({ days, initialTotalBudget, planId }: Budget
         </div>
       </div>
       ) : (
-      <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-4">
-        {/* 左侧：统计与记录 */}
-        <div className="space-y-4">
-          {/* 统计卡片 */}
-          <div className="grid grid-cols-3 gap-2">
-            <div className="rounded border bg-zinc-50 p-2">
-              <div className="text-[11px] text-zinc-600">总预算</div>
-              <div className="mt-1 text-sm font-semibold text-zinc-900">{typeof totalBudget === 'number' ? `¥${Math.round(totalBudget)}` : '未设置'}</div>
-            </div>
-            <div className="rounded border bg-zinc-50 p-2">
-              <div className="text-[11px] text-zinc-600">已支出</div>
-              <div className="mt-1 text-sm font-semibold text-rose-700">¥{Math.round(expenseTotals.sum)}</div>
-            </div>
-            <div className="rounded border bg-zinc-50 p-2">
-              <div className="text-[11px] text-zinc-600">余额</div>
-              <div className={["mt-1 text-sm font-semibold", (balance!==null && balance<0) ? "text-red-700" : "text-emerald-700"].join(" ")}>{balance!==null?`¥${Math.round(balance)}`:'—'}</div>
-            </div>
-          </div>
-
-          {/* 分类汇总条 */}
-          <div className="space-y-2">
-            {Object.entries(expenseTotals.group).map(([label, value]) => (
-              <div key={label} className="text-xs">
-                <div className="flex items-center justify-between">
-                  <span className="text-zinc-600">{label}</span>
-                  <span className="text-zinc-900">¥{Math.round(value)}</span>
-                </div>
-                <div className="mt-1 h-2 rounded bg-zinc-100">
-                  <div className="h-2 rounded bg-emerald-500" style={{ width: `${Math.min(100, (value / Math.max(1, expenseTotals.sum)) * 100)}%` }} />
-                </div>
-              </div>
-            ))}
-          </div>
-
-          {/* 已记账列表 */}
-          <div>
-            <div className="text-xs text-zinc-600">已记账</div>
-            <div className="mt-1 space-y-1">
-              {expenses.length === 0 ? (
-                <div className="text-xs text-zinc-500">暂无记录</div>
-              ) : expenses.map((e) => (
-                <div key={e.id} className="flex items-center justify-between text-xs">
-                  <span className="text-zinc-600">{new Date(e.dateISO).toLocaleString()} · {e.category} · {e.note || '—'}</span>
-                  <span className="text-zinc-900">¥{Math.round(e.amount)}</span>
-                </div>
-              ))}
-            </div>
-            {typeof totalBudget === 'number' && expenseTotals.sum > totalBudget ? (
-              <div className="mt-2 rounded border border-red-200 bg-red-50 p-2 text-xs text-red-700">已超支：超过预算 ¥{Math.round(expenseTotals.sum - totalBudget)}</div>
-            ) : null}
-          </div>
-        </div>
-
-        {/* 右侧：输入与语音 */}
+      <div className="mt-3 space-y-6">
+        {/* 上：输入与语音 */}
         <div className="space-y-3">
-          {/* 语音输入 */}
-          <div className="grid grid-cols-[1fr_auto] gap-2">
-            <input className="border px-2 py-2 rounded text-sm" placeholder="语音或手动输入内容（如：餐饮 58 元）" value={parseText} onChange={(e) => setParseText(e.target.value)} />
-            <button onClick={toggleVoice} className={["px-3 py-2 rounded text-xs", recording?"bg-red-600 text-white":"bg-blue-600 text-white"].join(" ")}>{recording?"停止" : "语音输入"}</button>
+          <div className="relative w-full">
+            <input
+              className="border px-2 py-2 rounded text-sm w-full pr-12"
+              placeholder="语音或手动输入内容（如：餐饮 58 元）"
+              value={parseText}
+              onChange={(e) => setParseText(e.target.value)}
+            />
+            <div className="pointer-events-auto absolute right-2 top-1/2 -translate-y-1/2 z-50">
+              <VoiceButton onPartial={(t) => setParseText(t)} onTranscribe={(t) => setParseText(t)} />
+            </div>
           </div>
 
-          {/* 手动金额输入 */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
             <input className="border px-2 py-2 rounded w-full" inputMode="numeric" placeholder="金额（元）" value={amountInput} onChange={(e) => setAmountInput(e.target.value)} />
             <select className="border px-2 py-2 rounded w-full" value={categoryInput} onChange={(e) => setCategoryInput(e.target.value)}>
@@ -342,6 +272,60 @@ export default function BudgetPanel({ days, initialTotalBudget, planId }: Budget
               setSaveError('请输入金额或提供文本');
             }}>添加记账</button>
             {saveError && <span className="text-xs text-red-600">{saveError}</span>}
+          </div>
+        </div>
+
+        {/* 下：统计与记录 */}
+        <div className="space-y-4">
+          <div className="grid grid-cols-3 gap-2">
+            <div className="rounded border bg-zinc-50 p-2">
+              <div className="text-[11px] text-zinc-600">总预算</div>
+              <div className="mt-1 text-sm font-semibold text-zinc-900">{typeof totalBudget === 'number' ? `¥${Math.round(totalBudget)}` : '未设置'}</div>
+            </div>
+            <div className="rounded border bg-zinc-50 p-2">
+              <div className="text-[11px] text-zinc-600">已支出</div>
+              <div className="mt-1 text-sm font-semibold text-rose-700">¥{Math.round(expenseTotals.sum)}</div>
+            </div>
+            <div className="rounded border bg-zinc-50 p-2">
+              <div className="text-[11px] text-zinc-600">余额</div>
+              <div className={["mt-1 text-sm font-semibold", (balance!==null && balance<0) ? "text-red-700" : "text-emerald-700"].join(" ")}>{balance!==null?`¥${Math.round(balance)}`:'—'}</div>
+            </div>
+          </div>
+
+          {/* 分类金额：紧凑标签样式，避免占据过多空间 */}
+          <div className="flex flex-wrap gap-1.5">
+            {Object.entries(expenseTotals.group).map(([label, value]) => {
+              const pct = expenseTotals.sum > 0 ? Math.round((value / expenseTotals.sum) * 100) : 0;
+              return (
+                <div
+                  key={label}
+                  className="inline-flex items-center rounded-full border border-zinc-200 bg-zinc-50 px-2 py-1 text-[11px]"
+                  title={`${label} · ¥${Math.round(value)}（${pct}%）`}
+                >
+                  <span className="mr-1 inline-block h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                  <span className="text-zinc-700">{label}</span>
+                  <span className="ml-1 text-zinc-400">·</span>
+                  <span className="ml-1 font-medium text-zinc-900">¥{Math.round(value)}</span>
+                </div>
+              );
+            })}
+          </div>
+
+          <div>
+            <div className="text-xs text-zinc-600">已记账</div>
+            <div className="mt-1 space-y-1">
+              {expenses.length === 0 ? (
+                <div className="text-xs text-zinc-500">暂无记录</div>
+              ) : expenses.map((e) => (
+                <div key={e.id} className="flex items-center justify-between text-xs">
+                  <span className="text-zinc-600">{new Date(e.dateISO).toLocaleString()} · {e.category} · {e.note || '—'}</span>
+                  <span className="text-zinc-900">¥{Math.round(e.amount)}</span>
+                </div>
+              ))}
+            </div>
+            {typeof totalBudget === 'number' && expenseTotals.sum > totalBudget ? (
+              <div className="mt-2 rounded border border-red-200 bg-red-50 p-2 text-xs text-red-700">已超支：超过预算 ¥{Math.round(expenseTotals.sum - totalBudget)}</div>
+            ) : null}
           </div>
         </div>
       </div>

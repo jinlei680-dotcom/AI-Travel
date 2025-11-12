@@ -3,12 +3,15 @@ import React, { useEffect, useRef, useState } from "react";
 
 type VoiceButtonProps = {
   onTranscribe?: (text: string) => void;
+  // 新增：实时片段更新回调，用于把中间结果同步到外部输入框
+  onPartial?: (text: string) => void;
   className?: string;
 };
 
 type State = "idle" | "recording" | "transcribing" | "done" | "error";
 
-export default function VoiceButton({ onTranscribe, className = "" }: VoiceButtonProps) {
+export default function VoiceButton({ onTranscribe, onPartial, className = "" }: VoiceButtonProps) {
+  console.log("[VoiceButton] render");
   const [state, setState] = useState<State>("idle");
   const [message, setMessage] = useState<string>("");
   const [mode] = useState<"service" | "iflytek" | "browser">("iflytek");
@@ -20,6 +23,9 @@ export default function VoiceButton({ onTranscribe, className = "" }: VoiceButto
   const processorRef = useRef<ScriptProcessorNode | null>(null);
   const textRef = useRef<string>("");
   const tokensRef = useRef<string[]>([]); // 累积识别词元，支持 wpgs 动态修正
+  const showMessageRef = useRef<boolean>(false); // 控制右侧提示是否显示（录音过程中禁用）
+  const browserRecogRef = useRef<any>(null); // 浏览器识别对象引用，便于停止
+  const fallbackTriedRef = useRef<boolean>(false); // 防重复回退
 
   // 将 Float32 PCM 转为 16bit PCM 并 base64
   const floatTo16kBase64 = (input: Float32Array, inputSampleRate: number, targetRate = 16000) => {
@@ -65,13 +71,18 @@ export default function VoiceButton({ onTranscribe, className = "" }: VoiceButto
 
   const startIflytek = async () => {
     try {
+      console.log("[VoiceButton] startIflytek: fetching sign...");
+      setMessage("请求讯飞签名...");
       const signRes = await fetch("/api/voice/iflytek/sign");
-      if (signRes.status === 501) {
+      console.log("[VoiceButton] sign response status:", signRes.status);
+      if (signRes.status !== 200) {
         setState("error");
-        setMessage("未配置讯飞密钥，请在 .env.local 配置 IFLYTEK_APP_ID/KEY/SECRET");
+        setMessage("讯飞签名失败或未配置，回退到浏览器识别");
+        if (!fallbackTriedRef.current) { fallbackTriedRef.current = true; startBrowserSpeech(); }
         return;
       }
       const { wsUrl, appId } = await signRes.json();
+      console.log("[VoiceButton] sign ok. appId:", appId);
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
       // 使用默认设备采样率，避免部分浏览器不支持强制 16000 采样率
@@ -82,6 +93,7 @@ export default function VoiceButton({ onTranscribe, className = "" }: VoiceButto
       const processor = audioCtx.createScriptProcessor(4096, 1, 1);
       processorRef.current = processor;
 
+      console.log("[VoiceButton] opening websocket:", wsUrl);
       const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
       textRef.current = "";
@@ -166,12 +178,15 @@ export default function VoiceButton({ onTranscribe, className = "" }: VoiceButto
             }
 
             const full = tokensRef.current.join("");
-            setMessage(full);
+            if (showMessageRef.current) setMessage(full);
             textRef.current = full;
+            // 将中间结果回调到外部，便于实时展示
+            try { onPartial?.(full); } catch {}
 
             if (status === 2) {
               setState("done");
               onTranscribe?.(full);
+              setMessage("");
               try { ws.close(); } catch {}
             }
           }
@@ -182,6 +197,7 @@ export default function VoiceButton({ onTranscribe, className = "" }: VoiceButto
       };
 
       ws.onerror = () => {
+        console.error("[VoiceButton] websocket error");
         // 连接失败时提示并保持错误状态，不回退，以确保使用讯飞方案
         try {
           source.disconnect();
@@ -190,7 +206,8 @@ export default function VoiceButton({ onTranscribe, className = "" }: VoiceButto
           stream.getTracks().forEach(t => t.stop());
         } catch {}
         setState("error");
-        setMessage("讯飞连接错误，请检查密钥、系统时间或网络");
+        setMessage("讯飞连接错误，回退到浏览器识别");
+        if (!fallbackTriedRef.current) { fallbackTriedRef.current = true; startBrowserSpeech(); }
       };
 
       ws.onclose = (ev: CloseEvent) => {
@@ -212,7 +229,9 @@ export default function VoiceButton({ onTranscribe, className = "" }: VoiceButto
       };
     } catch (e: any) {
       setState("error");
-      setMessage(e?.message || "讯飞启动失败");
+      console.error("[VoiceButton] startIflytek error:", e);
+      setMessage(e?.message || "讯飞启动失败，回退到浏览器识别");
+      if (!fallbackTriedRef.current) { fallbackTriedRef.current = true; startBrowserSpeech(); }
     }
   };
 
@@ -225,15 +244,25 @@ export default function VoiceButton({ onTranscribe, className = "" }: VoiceButto
       return;
     }
     const recog = new SR();
+    browserRecogRef.current = recog;
     recog.lang = "zh-CN";
-    recog.continuous = false;
-    recog.interimResults = false;
+    // 浏览器回退时也尽量开启连续识别与中间结果
+    recog.continuous = true;
+    recog.interimResults = true;
     setState("recording");
     recog.onresult = (ev: any) => {
-      const text = ev.results?.[0]?.[0]?.transcript || "";
-      setState("done");
-      setMessage(text);
-      onTranscribe?.(text);
+      try {
+        const parts: string[] = [];
+        for (let i = 0; i < ev.results.length; i++) {
+          const r = ev.results[i];
+          const t = r?.[0]?.transcript || "";
+          if (t) parts.push(t);
+        }
+        const text = parts.join(" ");
+        setMessage(text);
+        onPartial?.(text);
+        // 在结束事件中会再次触发最终 onTranscribe
+      } catch {}
     };
     recog.onerror = (e: any) => {
       setState("error");
@@ -246,10 +275,16 @@ export default function VoiceButton({ onTranscribe, className = "" }: VoiceButto
   };
 
   const startRecording = async () => {
+    console.log("[VoiceButton] click: startRecording");
+    showMessageRef.current = false; // 录音过程中不显示右侧提示
+    setMessage("");
     await startIflytek();
   };
 
   const stopRecording = () => {
+    // 停止浏览器识别（如处于回退模式）
+    try { browserRecogRef.current?.stop?.(); } catch {}
+    browserRecogRef.current = null;
     // 发送结束帧（若连接已打开）
     try {
       if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
@@ -278,23 +313,36 @@ export default function VoiceButton({ onTranscribe, className = "" }: VoiceButto
     try { streamRef.current?.getTracks().forEach((t) => t.stop()); } catch {}
     streamRef.current = null;
 
-    // 切为“转写中”，提示稍后生成路线
+    // 切为“转写中”，清空并停止显示右侧提示
     setState("transcribing");
-    setMessage("已停止，处理中...");
+    showMessageRef.current = false;
+    setMessage("");
   };
 
   useEffect(() => () => stopRecording(), []);
 
+  useEffect(() => {
+    console.log("[VoiceButton] mounted");
+    return () => console.log("[VoiceButton] unmounted");
+  }, []);
+
   return (
-    <div className={["flex items-center gap-2", className].join(" ")}>
+    <div
+      className={["flex items-center gap-2", className].join(" ")}
+      onClickCapture={() => console.log("[VoiceButton] container onClickCapture")}
+      onMouseDown={() => console.log("[VoiceButton] container onMouseDown")}
+    >
       <button
+        type="button"
         className="rounded bg-black px-3 py-1.5 text-white disabled:opacity-60"
+        aria-label="语音输入"
+        data-voice-button
         onClick={state === "recording" ? stopRecording : startRecording}
       >
         {state === "recording" ? "停止" : "语音输入"}
       </button>
       {/* 固定使用讯飞识别，不展示模式选择 */}
-      <span className="text-xs text-zinc-500">{message}</span>
+      {/* 不再显示右侧提示 */}
     </div>
   );
 }

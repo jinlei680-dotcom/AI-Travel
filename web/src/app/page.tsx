@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import Input from "@/components/Input";
 import Card from "@/components/Card";
 import VoiceButton from "@/components/VoiceButton";
@@ -105,6 +105,7 @@ export default function HomePage() {
   const [showLoginPrompt, setShowLoginPrompt] = useState(false);
   const [plans, setPlans] = useState<Array<{ id: string; destination: string; start_date: string; end_date: string; created_at: string }>>([]);
   const router = useRouter();
+  const inputRef = useRef<HTMLInputElement | null>(null);
   const subtitle = (() => {
     const s = parseSpecFromText(text || "");
     const d = s?.destination || "目的地";
@@ -194,6 +195,27 @@ export default function HomePage() {
     });
   }, []);
 
+  // 全局 Tab 快捷填充：任意位置按 Tab 都填入示例并聚焦输入框
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Tab") {
+        e.preventDefault();
+        const hint = "游玩北京，两个人，轻松一点，12月1号到12月3号，预算3000元。";
+        setText(hint);
+        try {
+          const el = inputRef.current;
+          if (el) {
+            el.focus();
+            const len = hint.length;
+            el.setSelectionRange(len, len);
+          }
+        } catch {}
+      }
+    };
+    window.addEventListener("keydown", handler, { capture: true });
+    return () => window.removeEventListener("keydown", handler as any, { capture: true } as any);
+  }, []);
+
   // 删除旅行规划（联动删除 itinerary_items -> itinerary_days -> trip_plans）
   const handleDeletePlan = async (id: string) => {
     if (!id) return;
@@ -249,7 +271,7 @@ export default function HomePage() {
   return (
     <>
       {/* 悬浮抽屉：我的旅行规划记录（左侧统一样式） */}
-      <div className="fixed left-0 top-28 z-40 group">
+      <div className="fixed left-0 top-[64px] z-40 group">
         <div className="rounded-r bg-blue-600 text-white px-3 py-2 text-sm shadow-md cursor-pointer hover:bg-blue-700">
           <span className="inline-flex items-center gap-1">
             <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2H6zm1 3h10v11H7V7zm2 2v2h6V9H9z"/></svg>
@@ -258,7 +280,7 @@ export default function HomePage() {
         </div>
         <div className="hidden group-hover:block mt-2">
           <Card title="我的旅行规划记录" className="w-80 shadow-lg border-blue-100">
-            <div className="max-h-80 overflow-auto space-y-2">
+            <div className="max-h-[75vh] overflow-auto space-y-2">
               {plans.length === 0 && (
                 <div className="text-sm text-zinc-500">暂无记录，登录后生成行程即可出现</div>
               )}
@@ -308,22 +330,37 @@ export default function HomePage() {
       <div className="mx-auto max-w-3xl px-4 min-h-screen flex flex-col items-center justify-center text-center mt-[-48px]">
       {loading ? <LoadingExperience title="正在为你生成行程" subtitle={subtitle} estimatedSeconds={120} /> : null}
       <h1 className="text-2xl font-semibold">AI 旅行助手</h1>
-      <p className="mt-3 text-zinc-600">一个输入框，支持语音识别；点击开始规划。</p>
+      <p className="mt-3 text-zinc-600">语音文字描述，智能生成旅行计划</p>
 
       {error && (
         <div className="mt-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</div>
       )}
 
-      {/* 单输入框：语音按钮内嵌到输入框右侧 */}
+      {/* 单输入框：语音按钮内嵌到输入框右侧；支持 Tab 快捷填充 */}
       <div className="mt-6 relative w-full">
         <Input
-          placeholder="例如：下周在杭州安排一个轻松的三天行程"
+          placeholder="例如：游玩北京，两个人，轻松一点，12月1号到12月3号，预算3000元。"
           value={text}
           onChange={(e) => setText(e.target.value)}
+          ref={inputRef}
+          onKeyDown={(e) => {
+            if (e.key === "Tab") {
+              e.preventDefault();
+              const hint = "游玩北京，两个人，轻松一点，12月1号到12月3号，预算3000元。";
+              setText(hint);
+              try {
+                const el = inputRef.current;
+                if (el) {
+                  const len = hint.length;
+                  el.setSelectionRange(len, len);
+                }
+              } catch {}
+            }
+          }}
           className="pr-12"
         />
         <div className="absolute right-2 top-1/2 -translate-y-1/2">
-          <VoiceButton onTranscribe={(t) => setText(t)} />
+          <VoiceButton onPartial={(t) => setText(t)} onTranscribe={(t) => setText(t)} />
         </div>
       </div>
 

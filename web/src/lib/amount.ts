@@ -105,3 +105,4 @@ export function detectCategory(text: string): string {
   if (/活动|play|活动费|娱乐|bar|club|ktv|体验|游玩|项目/.test(full)) return '活动';
   return '其他';
 }
+
